@@ -1,0 +1,267 @@
+require("PicPeakAPI")
+require("MetadataTask")
+require("SharedDialogSections")
+
+ExportTask = {}
+
+-- ---------------------------------------------------------------------------
+-- Show "choose event" modal when eventMode is 'onexport'
+-- ---------------------------------------------------------------------------
+local function showEventOptionsDialog(picpeak, exportParams)
+    local result = LrFunctionContext.callWithContext("eventChooser", function(context)
+        local f = LrView.osFactory()
+        exportParams.eventMode = "none"
+        exportParams.events = picpeak:getEvents() or {}
+
+        local dialogContent = f:column({
+            bind_to_object = exportParams,
+            spacing = f:control_spacing(),
+
+            f:group_box({
+                title = "PicPeak Gallery Event",
+                fill_horizontal = 1,
+                f:column({
+                    spacing = f:control_spacing(),
+                    fill_horizontal = 1,
+                    margin_top = 5,
+                    margin_bottom = 5,
+
+                    f:static_text({
+                        title = "Select the event (gallery) to upload photos to.",
+                        alignment = "left",
+                        font = "<system/small>",
+                        fill_horizontal = 1,
+                    }),
+
+                    f:separator({ fill_horizontal = 1 }),
+
+                    f:row({
+                        f:static_text({
+                            title = "Event mode:",
+                            alignment = "right",
+                            width = LrView.share("label_width"),
+                        }),
+                        f:popup_menu({
+                            fill_horizontal = 1,
+                            items = {
+                                { title = "Do not use an event", value = "none" },
+                                { title = "Existing event", value = "existing" },
+                                { title = "Create new event", value = "new" },
+                            },
+                            value = LrView.bind("eventMode"),
+                            immediate = true,
+                        }),
+                    }),
+
+                    -- Existing picker
+                    f:row({
+                        visible = LrBinding.keyEquals("eventMode", "existing"),
+                        f:static_text({
+                            title = "Event:",
+                            alignment = "right",
+                            width = LrView.share("label_width"),
+                        }),
+                        f:popup_menu({
+                            fill_horizontal = 1,
+                            value = LrView.bind("eventId"),
+                            items = LrView.bind("events"),
+                            immediate = true,
+                        }),
+                    }),
+
+                    -- New event name
+                    f:row({
+                        visible = LrBinding.keyEquals("eventMode", "new"),
+                        f:static_text({
+                            title = "Event name:",
+                            alignment = "right",
+                            width = LrView.share("label_width"),
+                        }),
+                        f:edit_field({
+                            fill_horizontal = 1,
+                            value = LrView.bind("newEventName"),
+                            immediate = true,
+                        }),
+                    }),
+                    f:row({
+                        visible = LrBinding.keyEquals("eventMode", "new"),
+                        f:static_text({
+                            title = "Event type:",
+                            alignment = "right",
+                            width = LrView.share("label_width"),
+                        }),
+                        f:popup_menu({
+                            value = LrView.bind("newEventType"),
+                            items = require("SharedDialogSections").EVENT_TYPES,
+                            immediate = true,
+                        }),
+                    }),
+                }),
+            }),
+        })
+
+        local dialogResult = LrDialogs.presentModalDialog({
+            title = "PicPeak event options",
+            contents = dialogContent,
+        })
+
+        if dialogResult ~= "ok" then
+            LrDialogs.message("Export canceled.")
+            return false
+        end
+        return true
+    end, exportParams)
+
+    return result == true
+end
+
+-- ---------------------------------------------------------------------------
+-- Resolve event for export
+-- ---------------------------------------------------------------------------
+local function resolveEventForExport(picpeak, exportParams)
+    if exportParams.eventMode == "onexport" then
+        if not showEventOptionsDialog(picpeak, exportParams) then
+            return true, nil  -- canceled
+        end
+    end
+
+    if exportParams.eventMode == "existing" then
+        local id = exportParams.eventId
+        if util.nilOrEmpty(id) then
+            log:warn("ExportTask: no event selected")
+            return false, nil
+        end
+        log:trace("ExportTask: using existing event id=" .. tostring(id))
+        return false, tostring(id)
+
+    elseif exportParams.eventMode == "new" then
+        local name = exportParams.newEventName
+        if util.nilOrEmpty(name) then
+            ErrorHandler.handleError(
+                "Event name is required when creating a new event.",
+                "ExportTask: newEventName empty"
+            )
+            return true, nil  -- treat as canceled / error
+        end
+        log:trace("ExportTask: creating new event '" .. name .. "'")
+        local newId = picpeak:createEvent({
+            event_name = name,
+            event_type = exportParams.newEventType or "other",
+            event_date = exportParams.newEventDate or "",
+            require_password = exportParams.newEventRequirePassword,
+            password = exportParams.newEventPassword or "",
+        })
+        if not newId then
+            ErrorHandler.handleError(
+                "Failed to create PicPeak event. Check connection and logs.",
+                "ExportTask: createEvent returned nil"
+            )
+            return true, nil
+        end
+        log:info("ExportTask: created event id=" .. tostring(newId))
+        return false, tostring(newId)
+
+    elseif exportParams.eventMode == "none" then
+        log:trace("ExportTask: no event mode, uploading without event association")
+        return false, nil
+    end
+
+    log:warn("ExportTask: unknown eventMode=" .. tostring(exportParams.eventMode))
+    return false, nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Main export entry point
+-- ---------------------------------------------------------------------------
+
+function ExportTask.processRenderedPhotos(functionContext, exportContext)
+    local exportSession, exportParams, picpeak = util.validateExportContextAndConnect(exportContext, "Export")
+    if not exportSession then
+        return nil
+    end
+
+    local nPhotos = exportSession:countRenditions()
+    log:info("=== PicPeak Export START: " .. nPhotos .. " photos | url=" .. tostring(exportParams.url)
+        .. " | eventMode=" .. tostring(exportParams.eventMode) .. " ===")
+
+    local canceled, eventId = resolveEventForExport(picpeak, exportParams)
+    if canceled then
+        return
+    end
+
+    local progressScope = LrProgressScope({
+        title = util.buildSimpleUploadProgressTitle(nPhotos, "Exporting", exportParams.url or "PicPeak"),
+        functionContext = functionContext,
+    })
+
+    local failures = {}
+    local atLeastOneSuccess = false
+    local done = 0
+
+    for _, rendition in exportContext:renditions({ stopIfCanceled = true }) do
+        local success, pathOrMessage = rendition:waitForRender()
+        if progressScope:isCanceled() then
+            break
+        end
+
+        if success then
+            local photo = rendition.photo
+            local fileName = photo:getFormattedMetadata("fileName")
+
+            local photoId, errReason = picpeak:uploadPhoto(eventId, pathOrMessage, fileName)
+            util.safeDeleteTempFile(pathOrMessage)
+
+            if not photoId then
+                log:error("ExportTask: upload failed for " .. fileName .. ": " .. tostring(errReason))
+                table.insert(failures, fileName .. " (" .. (errReason or "Upload failed") .. ")")
+            else
+                atLeastOneSuccess = true
+                MetadataTask.setPhotoId(photo, tostring(photoId))
+                if eventId then
+                    MetadataTask.setEventId(photo, eventId)
+                end
+                log:info("ExportTask: uploaded " .. fileName .. " -> photoId=" .. tostring(photoId))
+            end
+        else
+            log:warn("ExportTask: render failed for photo: " .. tostring(pathOrMessage))
+            util.safeDeleteTempFile(pathOrMessage)
+        end
+
+        done = done + 1
+        progressScope:setPortionComplete(done, nPhotos)
+        if done == 1 or done % 10 == 0 or done == nPhotos then
+            log:info("Export progress: " .. done .. "/" .. nPhotos)
+        end
+    end
+
+    progressScope:done()
+
+    -- If we created a new event but nothing uploaded, it will remain as an empty gallery.
+    -- PicPeak v1 API has no delete event endpoint, so we just warn.
+    if not atLeastOneSuccess and exportParams.eventMode == "new" and eventId then
+        LrDialogs.message(
+            "PicPeak Export",
+            "No photos were uploaded successfully. The empty gallery event was left on the server.",
+            "warning"
+        )
+    end
+
+    log:info("=== PicPeak Export DONE: " .. nPhotos .. " photos | failures=" .. #failures .. " ===")
+    util.reportUploadFailures(failures)
+
+    -- Show share link if we have an event
+    if atLeastOneSuccess and eventId then
+        local shareUrl = picpeak:getEventShareUrl(eventId)
+        if shareUrl then
+            local result = LrDialogs.confirm(
+                "Upload complete",
+                "Gallery share link:\n" .. shareUrl,
+                "Copy to clipboard",
+                "Close"
+            )
+            if result == "ok" then
+                LrDialogs.message("Copied!", shareUrl)
+            end
+        end
+    end
+end
