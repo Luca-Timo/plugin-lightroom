@@ -83,7 +83,9 @@ function PublishTask.processRenderedPhotos(functionContext, exportContext)
     })
 
     local failures = {}
+    local skipped = 0
     local done = 0
+    local shareUrl = picpeak:getEventShareUrl(eventId)
 
     for _, rendition in exportContext:renditions({ stopIfCanceled = true }) do
         local success, pathOrMessage = rendition:waitForRender()
@@ -92,20 +94,34 @@ function PublishTask.processRenderedPhotos(functionContext, exportContext)
         if success then
             local photo = rendition.photo
             local fileName = photo:getFormattedMetadata("fileName")
-            local photoId, errReason = picpeak:uploadPhoto(eventId, pathOrMessage, fileName)
-            util.safeDeleteTempFile(pathOrMessage)
 
-            if not photoId then
-                log:error("PublishTask: upload failed for " .. fileName .. ": " .. tostring(errReason))
-                table.insert(failures, fileName .. " (" .. (errReason or "Upload failed") .. ")")
-            else
-                local photoIdStr = tostring(photoId)
-                MetadataTask.setPhotoId(photo, photoIdStr)
-                MetadataTask.setEventId(photo, eventId)
-                rendition:recordPublishedPhotoId(photoIdStr)
-                local shareUrl = picpeak:getEventShareUrl(eventId)
+            -- Detect re-publish: Lightroom passes an existing remote ID for photos
+            -- that were previously published and have since been modified.
+            -- PicPeak v1 API has no replace/delete photo endpoint, so we cannot
+            -- push the updated version without creating a duplicate. Skip the upload
+            -- and re-record the existing ID so Lightroom marks the photo as up-to-date.
+            local existingId = rendition.publishedPhoto and rendition.publishedPhoto:getRemoteId()
+            if existingId and existingId ~= "" then
+                util.safeDeleteTempFile(pathOrMessage)
+                rendition:recordPublishedPhotoId(existingId)
                 if shareUrl then rendition:recordPublishedPhotoUrl(shareUrl) end
-                log:info("PublishTask: " .. fileName .. " -> photoId=" .. photoIdStr)
+                skipped = skipped + 1
+                log:info("PublishTask: skip re-upload for " .. fileName .. " (keeping id=" .. existingId .. ")")
+            else
+                local photoId, errReason = picpeak:uploadPhoto(eventId, pathOrMessage, fileName)
+                util.safeDeleteTempFile(pathOrMessage)
+
+                if not photoId then
+                    log:error("PublishTask: upload failed for " .. fileName .. ": " .. tostring(errReason))
+                    table.insert(failures, fileName .. " (" .. (errReason or "Upload failed") .. ")")
+                else
+                    local photoIdStr = tostring(photoId)
+                    MetadataTask.setPhotoId(photo, photoIdStr)
+                    MetadataTask.setEventId(photo, eventId)
+                    rendition:recordPublishedPhotoId(photoIdStr)
+                    if shareUrl then rendition:recordPublishedPhotoUrl(shareUrl) end
+                    log:info("PublishTask: " .. fileName .. " -> photoId=" .. photoIdStr)
+                end
             end
         else
             util.safeDeleteTempFile(pathOrMessage)
@@ -119,7 +135,18 @@ function PublishTask.processRenderedPhotos(functionContext, exportContext)
     end
 
     progressScope:done()
-    log:info("=== PicPeak Publish DONE: " .. nPhotos .. " | failures=" .. #failures .. " ===")
+    log:info("=== PicPeak Publish DONE: " .. nPhotos .. " | failures=" .. #failures .. " | skipped=" .. skipped .. " ===")
+    if skipped > 0 then
+        LrDialogs.message(
+            "PicPeak: " .. skipped .. " photo(s) not re-uploaded",
+            "The PicPeak API does not support replacing photos remotely. "
+                .. tostring(skipped)
+                .. " already-published photo(s) were skipped — the originals remain in PicPeak unchanged.\n\n"
+                .. "To push an updated version: remove the photo from this collection, delete it in PicPeak, "
+                .. "then re-add and re-publish.",
+            "info"
+        )
+    end
     util.reportUploadFailures(failures)
 end
 
