@@ -16,7 +16,7 @@ return {
             title = "PicPeak Event ID",
             dataType = "string",
             readOnly = true,
-            browsable = true,
+            browsable = false,
             searchable = false,
         },
     },
