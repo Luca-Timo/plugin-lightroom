@@ -256,32 +256,48 @@ function PicPeakAPI:getEventShareUrl(eventId)
 end
 
 -- Create a new gallery event.
--- params: { event_name, event_type, event_date, require_password, password }
--- Returns event id (integer) on success, nil on failure.
+-- params table (all optional except event_name and event_type):
+--   event_name, event_type, event_date,
+--   customer_name, customer_email, customer_phone, admin_email,
+--   require_password, password,
+--   expires_at, feedback_enabled, color_theme
+-- Returns: event id, share_url on success; nil on failure.
 function PicPeakAPI:createEvent(params)
     if util.nilOrEmpty(params.event_name) then
         ErrorHandler.handleError("No event name given.", "createEvent: event_name empty")
         return nil
     end
-    local eventType = (params.event_type and params.event_type ~= "") and params.event_type or "other"
 
     local body = {
         event_name = params.event_name,
-        event_type = eventType,
+        event_type = (not util.nilOrEmpty(params.event_type)) and params.event_type or "other",
     }
-    if params.event_date and params.event_date ~= "" then
-        body.event_date = params.event_date
-    end
-    if params.require_password then
-        body.require_password = true
-        body.password = params.password or ""
-    else
-        body.require_password = false
+
+    -- Optional string fields: only include when non-empty
+    local function addStr(key) if not util.nilOrEmpty(params[key]) then body[key] = params[key] end end
+    addStr("event_date")
+    addStr("customer_name")
+    addStr("customer_email")
+    addStr("customer_phone")
+    addStr("admin_email")
+    addStr("expires_at")
+    addStr("color_theme")
+
+    -- Password protection
+    body.require_password = params.require_password and true or false
+    if body.require_password and not util.nilOrEmpty(params.password) then
+        body.password = params.password
     end
 
+    -- Feedback (explicit boolean so server applies it vs inheriting the global default)
+    if params.feedback_enabled ~= nil then
+        body.feedback_enabled = params.feedback_enabled and true or false
+    end
+
+    log:trace("createEvent body: " .. JSON:encode(body))
     local parsedResponse = self:doPostRequest("/events", body)
     if parsedResponse and parsedResponse.id then
-        log:info("createEvent: created event id=" .. tostring(parsedResponse.id) .. " slug=" .. tostring(parsedResponse.slug))
+        log:info("createEvent: id=" .. tostring(parsedResponse.id) .. " slug=" .. tostring(parsedResponse.slug))
         return parsedResponse.id, parsedResponse.share_url
     end
     return nil

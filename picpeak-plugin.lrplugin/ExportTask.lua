@@ -69,31 +69,39 @@ local function showEventOptionsDialog(picpeak, exportParams)
                         }),
                     }),
 
-                    -- New event name
-                    f:row({
+                    -- New event fields
+                    f:column({
                         visible = LrBinding.keyEquals("eventMode", "new"),
-                        f:static_text({
-                            title = "Event name:",
-                            alignment = "right",
-                            width = LrView.share("label_width"),
+                        spacing = f:control_spacing(),
+                        fill_horizontal = 1,
+                        f:row({
+                            f:static_text({ title = "Event name:", alignment = "right", width = LrView.share("label_width") }),
+                            f:edit_field({ fill_horizontal = 1, value = LrView.bind("newEventName"), immediate = true }),
                         }),
-                        f:edit_field({
-                            fill_horizontal = 1,
-                            value = LrView.bind("newEventName"),
-                            immediate = true,
+                        f:row({
+                            f:static_text({ title = "Event type:", alignment = "right", width = LrView.share("label_width") }),
+                            f:popup_menu({
+                                value = LrView.bind("newEventType"),
+                                items = SharedDialogSections.EVENT_TYPES,
+                                immediate = true,
+                            }),
                         }),
-                    }),
-                    f:row({
-                        visible = LrBinding.keyEquals("eventMode", "new"),
-                        f:static_text({
-                            title = "Event type:",
-                            alignment = "right",
-                            width = LrView.share("label_width"),
+                        f:row({
+                            f:static_text({ title = "Customer name:", alignment = "right", width = LrView.share("label_width") }),
+                            f:edit_field({ fill_horizontal = 1, value = LrView.bind("newEventCustomerName"), immediate = true }),
                         }),
-                        f:popup_menu({
-                            value = LrView.bind("newEventType"),
-                            items = require("SharedDialogSections").EVENT_TYPES,
-                            immediate = true,
+                        f:row({
+                            f:static_text({ title = "Customer email:", alignment = "right", width = LrView.share("label_width") }),
+                            f:edit_field({ fill_horizontal = 1, value = LrView.bind("newEventCustomerEmail"), immediate = true }),
+                        }),
+                        f:row({
+                            f:static_text({ title = "Password protect:", alignment = "right", width = LrView.share("label_width") }),
+                            f:checkbox({ title = "Require password", value = LrView.bind("newEventRequirePassword") }),
+                        }),
+                        f:row({
+                            visible = LrView.bind("newEventRequirePassword"),
+                            f:static_text({ title = "Password:", alignment = "right", width = LrView.share("label_width") }),
+                            f:password_field({ fill_horizontal = 1, value = LrView.bind("newEventPassword"), immediate = true }),
                         }),
                     }),
                 }),
@@ -145,11 +153,18 @@ local function resolveEventForExport(picpeak, exportParams)
         end
         log:trace("ExportTask: creating new event '" .. name .. "'")
         local newId = picpeak:createEvent({
-            event_name = name,
-            event_type = exportParams.newEventType or "other",
-            event_date = exportParams.newEventDate or "",
-            require_password = exportParams.newEventRequirePassword,
-            password = exportParams.newEventPassword or "",
+            event_name          = name,
+            event_type          = exportParams.newEventType,
+            event_date          = exportParams.newEventDate,
+            customer_name       = exportParams.newEventCustomerName,
+            customer_email      = exportParams.newEventCustomerEmail,
+            customer_phone      = exportParams.newEventCustomerPhone,
+            admin_email         = exportParams.newEventAdminEmail,
+            require_password    = exportParams.newEventRequirePassword,
+            password            = exportParams.newEventPassword,
+            expires_at          = exportParams.newEventExpiresAt,
+            feedback_enabled    = exportParams.newEventFeedbackEnabled,
+            color_theme         = exportParams.newEventColorTheme,
         })
         if not newId then
             ErrorHandler.handleError(

@@ -6,57 +6,58 @@ PublishTask = {}
 
 -- ---------------------------------------------------------------------------
 -- Resolve or create the event for a publish collection.
--- Returns: eventId (string) or nil.
 -- ---------------------------------------------------------------------------
 local function resolvePublishEvent(picpeak, exportContext)
     local publishedCollection = exportContext.publishedCollection
-    local collectionSettings = publishedCollection:getCollectionInfoSummary().collectionSettings
-    local strategy = collectionSettings.albumCreationStrategy or "collection"
+    local cs = publishedCollection:getCollectionInfoSummary().collectionSettings
+    local strategy = cs.albumCreationStrategy or "collection"
     local eventId = publishedCollection:getRemoteId()
     local collectionName = publishedCollection:getName()
     local exportSession = exportContext.exportSession
 
     log:trace("resolvePublishEvent: strategy=" .. strategy .. " remoteId=" .. tostring(eventId))
 
-    if strategy == "existing" and collectionSettings.remoteId then
-        eventId = tostring(collectionSettings.remoteId)
+    if strategy == "existing" and cs.remoteId then
+        eventId = tostring(cs.remoteId)
     end
 
     if eventId and eventId ~= "" then
         if picpeak:checkIfEventExists(eventId) then
             local shareUrl = picpeak:getEventShareUrl(eventId)
             exportSession:recordRemoteCollectionId(eventId)
-            if shareUrl then
-                exportSession:recordRemoteCollectionUrl(shareUrl)
-            end
+            if shareUrl then exportSession:recordRemoteCollectionUrl(shareUrl) end
             return eventId
         else
-            log:warn("resolvePublishEvent: stored event " .. eventId .. " no longer exists, creating new one")
+            log:warn("resolvePublishEvent: event " .. eventId .. " gone, creating new one")
             eventId = nil
         end
     end
 
-    -- Create new event from collection name
-    log:info("resolvePublishEvent: creating new event '" .. collectionName .. "'")
-    local eventType = collectionSettings.eventType or "other"
-    local newId = picpeak:createEvent({
-        event_name = collectionName,
-        event_type = eventType,
-        require_password = false,
+    -- Build creation params from collection settings
+    local newId, shareUrl = picpeak:createEvent({
+        event_name          = collectionName,
+        event_type          = cs.eventType,
+        event_date          = cs.eventDate,
+        customer_name       = cs.customerName,
+        customer_email      = cs.customerEmail,
+        customer_phone      = cs.customerPhone,
+        admin_email         = cs.adminEmail,
+        require_password    = cs.requirePassword,
+        password            = cs.password,
+        expires_at          = cs.expiresAt,
+        feedback_enabled    = cs.feedbackEnabled,
+        color_theme         = cs.colorTheme,
     })
     if not newId then
         ErrorHandler.handleError(
-            "Failed to create PicPeak event for collection '" .. collectionName .. "'. Check connection.",
+            "Failed to create PicPeak event for collection '" .. collectionName .. "'.",
             "resolvePublishEvent: createEvent returned nil"
         )
         return nil
     end
     newId = tostring(newId)
-    local shareUrl = picpeak:getEventShareUrl(newId)
     exportSession:recordRemoteCollectionId(newId)
-    if shareUrl then
-        exportSession:recordRemoteCollectionUrl(shareUrl)
-    end
+    if shareUrl then exportSession:recordRemoteCollectionUrl(shareUrl) end
     log:info("resolvePublishEvent: created event id=" .. newId)
     return newId
 end
@@ -67,19 +68,14 @@ end
 
 function PublishTask.processRenderedPhotos(functionContext, exportContext)
     local exportSession, exportParams, picpeak = util.validateExportContextAndConnect(exportContext, "Publish")
-    if not exportSession then
-        return nil
-    end
+    if not exportSession then return nil end
 
     local eventId = resolvePublishEvent(picpeak, exportContext)
-    if not eventId then
-        return nil
-    end
+    if not eventId then return nil end
 
     local nPhotos = exportSession:countRenditions()
-    local progressTitle = (exportParams.url and exportParams.url ~= "") and exportParams.url or "PicPeak"
-    log:info("=== PicPeak Publish START: " .. nPhotos .. " photos | url=" .. tostring(exportParams.url)
-        .. " | eventId=" .. tostring(eventId) .. " ===")
+    local progressTitle = (exportParams.url ~= "") and exportParams.url or "PicPeak"
+    log:info("=== PicPeak Publish START: " .. nPhotos .. " photos | eventId=" .. eventId .. " ===")
 
     local progressScope = LrProgressScope({
         title = util.buildSimpleUploadProgressTitle(nPhotos, "Publishing", progressTitle),
@@ -91,14 +87,11 @@ function PublishTask.processRenderedPhotos(functionContext, exportContext)
 
     for _, rendition in exportContext:renditions({ stopIfCanceled = true }) do
         local success, pathOrMessage = rendition:waitForRender()
-        if progressScope:isCanceled() then
-            break
-        end
+        if progressScope:isCanceled() then break end
 
         if success then
             local photo = rendition.photo
             local fileName = photo:getFormattedMetadata("fileName")
-
             local photoId, errReason = picpeak:uploadPhoto(eventId, pathOrMessage, fileName)
             util.safeDeleteTempFile(pathOrMessage)
 
@@ -111,13 +104,10 @@ function PublishTask.processRenderedPhotos(functionContext, exportContext)
                 MetadataTask.setEventId(photo, eventId)
                 rendition:recordPublishedPhotoId(photoIdStr)
                 local shareUrl = picpeak:getEventShareUrl(eventId)
-                if shareUrl then
-                    rendition:recordPublishedPhotoUrl(shareUrl)
-                end
-                log:info("PublishTask: uploaded " .. fileName .. " -> photoId=" .. photoIdStr)
+                if shareUrl then rendition:recordPublishedPhotoUrl(shareUrl) end
+                log:info("PublishTask: " .. fileName .. " -> photoId=" .. photoIdStr)
             end
         else
-            log:warn("PublishTask: render failed: " .. tostring(pathOrMessage))
             util.safeDeleteTempFile(pathOrMessage)
         end
 
@@ -129,54 +119,42 @@ function PublishTask.processRenderedPhotos(functionContext, exportContext)
     end
 
     progressScope:done()
-    log:info("=== PicPeak Publish DONE: " .. nPhotos .. " photos | failures=" .. #failures .. " ===")
+    log:info("=== PicPeak Publish DONE: " .. nPhotos .. " | failures=" .. #failures .. " ===")
     util.reportUploadFailures(failures)
 end
 
 -- ---------------------------------------------------------------------------
--- Collection management callbacks
+-- Collection management
 -- ---------------------------------------------------------------------------
 
-function PublishTask.deletePhotosFromPublishedCollection(
-    publishSettings,
-    arrayOfPhotoIds,
-    deletedCallback,
-    localCollectionId
-)
-    -- PicPeak v1 API has no endpoint to delete individual photos.
-    -- We mark them as deleted in Lightroom so they won't be republished,
-    -- but they remain in the PicPeak gallery on the server.
+function PublishTask.deletePhotosFromPublishedCollection(publishSettings, arrayOfPhotoIds, deletedCallback, localCollectionId)
     if #arrayOfPhotoIds > 0 then
         LrDialogs.message(
             "PicPeak: Photos removed from collection",
-            "Note: The PicPeak API does not support deleting photos via the API. "
+            "The PicPeak API (v1) does not support deleting individual photos remotely. "
                 .. tostring(#arrayOfPhotoIds)
-                .. " photo(s) were removed from the Lightroom publish collection but remain in the PicPeak gallery."
-                .. " Remove them manually in PicPeak if needed.",
+                .. " photo(s) were removed from the Lightroom publish collection but remain in the PicPeak gallery. "
+                .. "Delete them manually in PicPeak if needed.",
             "info"
         )
     end
-    for _, photoId in ipairs(arrayOfPhotoIds) do
-        deletedCallback(photoId)
-    end
+    for _, photoId in ipairs(arrayOfPhotoIds) do deletedCallback(photoId) end
 end
 
 function PublishTask.deletePublishedCollection(publishSettings, info)
-    -- PicPeak v1 API has no delete event endpoint (admin-only in UI).
     if info.remoteId and info.remoteId ~= "" then
         LrDialogs.message(
             "PicPeak: Gallery not deleted",
-            "The PicPeak API does not support deleting gallery events. "
+            "The PicPeak API (v1) does not support deleting gallery events remotely. "
                 .. "The Lightroom collection was removed, but the gallery (event id="
                 .. tostring(info.remoteId)
-                .. ") still exists in PicPeak. Delete it manually if needed.",
+                .. ") still exists in PicPeak. Delete it manually in the PicPeak admin interface.",
             "info"
         )
     end
 end
 
 function PublishTask.renamePublishedCollection(publishSettings, info)
-    -- PicPeak v1 API has no rename event endpoint.
     log:trace("renamePublishedCollection: rename not supported by PicPeak v1 API")
 end
 
@@ -200,77 +178,79 @@ function PublishTask.getCollectionBehaviorInfo(publishSettings)
 end
 
 -- ---------------------------------------------------------------------------
--- Per-collection settings (event type selection)
+-- Per-collection settings dialog
 -- ---------------------------------------------------------------------------
 
+-- Helper: seed pluginContext from persisted collectionSettings (for re-opens)
+local function seedPluginContext(ctx, cs)
+    ctx.albumCreationStrategy = cs.albumCreationStrategy or "collection"
+    ctx.eventType             = cs.eventType or "other"
+    ctx.eventDate             = cs.eventDate or ""
+    ctx.customerName          = cs.customerName or ""
+    ctx.customerEmail         = cs.customerEmail or ""
+    ctx.customerPhone         = cs.customerPhone or ""
+    ctx.adminEmail            = cs.adminEmail or ""
+    ctx.requirePassword       = cs.requirePassword or false
+    ctx.password              = cs.password or ""
+    ctx.expiresAt             = cs.expiresAt or ""
+    ctx.feedbackEnabled       = cs.feedbackEnabled or false
+    ctx.colorTheme            = cs.colorTheme or ""
+    ctx.selectedEventId       = cs.remoteId or "0"
+    ctx.picpeakEvents         = { { title = "Loading…", value = "0" } }
+end
+
 function PublishTask.viewForCollectionSettings(f, publishSettings, info)
+    -- Existing published collection: show read-only summary
     if info.publishedCollection ~= nil then
-        -- Editing an existing collection: show read-only info
         local remoteId = info.publishedCollection:getRemoteId()
+        local name = info.publishedCollection:getName()
+        local rows = {}
         if remoteId then
-            return f:row({
-                f:static_text({
-                    title = "PicPeak event ID: " .. tostring(remoteId),
-                    alignment = "left",
-                    font = "<system/small>",
-                }),
-            })
+            table.insert(rows, f:row({
+                f:static_text({ title = "PicPeak event ID: ", font = "<system/small>" }),
+                f:static_text({ title = tostring(remoteId), font = "<system/bold/small>" }),
+            }))
         end
-        return f:row({})
+        if name then
+            table.insert(rows, f:row({
+                f:static_text({ title = "Collection name: ", font = "<system/small>" }),
+                f:static_text({ title = tostring(name), font = "<system/small>" }),
+            }))
+        end
+        if #rows == 0 then table.insert(rows, f:row({})) end
+        return f:column(rows)
     end
 
-    -- New collection: choose event type
-    info.pluginContext.eventType = "other"
-    info.pluginContext.albumCreationStrategy = "collection"
-    info.pluginContext.picpeakEvents = { { title = "Please select", value = "0" } }
+    -- New collection: seed context and build form
+    local ctx = info.pluginContext
+    local cs = info.collectionSettings or {}
+    seedPluginContext(ctx, cs)
 
+    -- Async: load event list for "use existing" picker
     LrTasks.startAsyncTask(function()
         local picpeak = PicPeakAPI:new(publishSettings.url, publishSettings.apiToken)
         local events = picpeak:getEvents()
-        if events and #events > 0 then
-            local items = { { title = "Please select", value = "0" } }
-            for _, e in ipairs(events) do
-                table.insert(items, e)
-            end
-            info.pluginContext.picpeakEvents = items
-        end
+        local items = { { title = "Please select", value = "0" } }
+        for _, e in ipairs(events or {}) do table.insert(items, e) end
+        ctx.picpeakEvents = items
     end)
 
     local bind = LrView.bind
-    local share = LrView.share
+    local lw = LrView.share("cs_lw")
 
     return f:group_box({
-        bind_to_object = info.pluginContext,
+        bind_to_object = ctx,
         title = "PicPeak Event Settings",
         fill_horizontal = 1,
         f:column({
             spacing = f:control_spacing(),
             fill_horizontal = 1,
-            f:row({
-                f:static_text({
-                    title = "This collection will be synced to a PicPeak gallery event.",
-                    alignment = "left",
-                    font = "<system/small>",
-                    fill_horizontal = 1,
-                }),
-            }),
-            f:separator({ fill_horizontal = 1 }),
+
+            -- Strategy
             f:radio_button({
                 title = "Create new event from collection name",
                 checked_value = "collection",
                 value = bind("albumCreationStrategy"),
-            }),
-            f:row({
-                f:static_text({
-                    title = "    Event type:",
-                    alignment = "right",
-                }),
-                f:popup_menu({
-                    value = bind("eventType"),
-                    items = require("SharedDialogSections").EVENT_TYPES,
-                    immediate = true,
-                    enabled = LrBinding.keyEquals("albumCreationStrategy", "collection"),
-                }),
             }),
             f:row({
                 f:radio_button({
@@ -286,55 +266,166 @@ function PublishTask.viewForCollectionSettings(f, publishSettings, info)
                     immediate = true,
                 }),
             }),
+
+            f:separator({ fill_horizontal = 1 }),
+
+            -- New event details (shown when strategy == "collection")
+            f:column({
+                visible = LrBinding.keyEquals("albumCreationStrategy", "collection"),
+                spacing = f:control_spacing(),
+                fill_horizontal = 1,
+
+                f:group_box({
+                    title = "Event Details",
+                    fill_horizontal = 1,
+                    f:column({
+                        spacing = f:control_spacing(),
+                        fill_horizontal = 1,
+                        f:row({
+                            f:static_text({ title = "Event type:", alignment = "right", width = lw }),
+                            f:popup_menu({
+                                value = bind("eventType"),
+                                items = SharedDialogSections.EVENT_TYPES,
+                                immediate = true,
+                            }),
+                        }),
+                        f:row({
+                            f:static_text({ title = "Event date:", alignment = "right", width = lw }),
+                            f:edit_field({ value = bind("eventDate"), width_in_chars = 14, immediate = true }),
+                            f:static_text({ title = "YYYY-MM-DD, optional", font = "<system/small>" }),
+                        }),
+                    }),
+                }),
+
+                f:group_box({
+                    title = "Customer Information",
+                    fill_horizontal = 1,
+                    f:column({
+                        spacing = f:control_spacing(),
+                        fill_horizontal = 1,
+                        f:row({
+                            f:static_text({ title = "Customer name:", alignment = "right", width = lw }),
+                            f:edit_field({ value = bind("customerName"), fill_horizontal = 1, immediate = true }),
+                        }),
+                        f:row({
+                            f:static_text({ title = "Customer email:", alignment = "right", width = lw }),
+                            f:edit_field({ value = bind("customerEmail"), fill_horizontal = 1, immediate = true }),
+                        }),
+                        f:row({
+                            f:static_text({ title = "Customer phone:", alignment = "right", width = lw }),
+                            f:edit_field({ value = bind("customerPhone"), fill_horizontal = 1, immediate = true }),
+                            f:static_text({ title = "optional", font = "<system/small>" }),
+                        }),
+                        f:row({
+                            f:static_text({ title = "Admin email:", alignment = "right", width = lw }),
+                            f:edit_field({ value = bind("adminEmail"), fill_horizontal = 1, immediate = true }),
+                            f:static_text({ title = "for notifications", font = "<system/small>" }),
+                        }),
+                    }),
+                }),
+
+                f:group_box({
+                    title = "Access & Expiry",
+                    fill_horizontal = 1,
+                    f:column({
+                        spacing = f:control_spacing(),
+                        fill_horizontal = 1,
+                        f:row({
+                            f:static_text({ title = "Password protect:", alignment = "right", width = lw }),
+                            f:checkbox({
+                                title = "Require password to view gallery",
+                                value = bind("requirePassword"),
+                            }),
+                        }),
+                        f:row({
+                            visible = bind("requirePassword"),
+                            f:static_text({ title = "Gallery password:", alignment = "right", width = lw }),
+                            f:password_field({ value = bind("password"), fill_horizontal = 1, immediate = true }),
+                        }),
+                        f:row({
+                            f:static_text({ title = "Expires at:", alignment = "right", width = lw }),
+                            f:edit_field({ value = bind("expiresAt"), width_in_chars = 22, immediate = true }),
+                            f:static_text({ title = "YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS", font = "<system/small>" }),
+                        }),
+                    }),
+                }),
+
+                f:group_box({
+                    title = "Gallery Options",
+                    fill_horizontal = 1,
+                    f:column({
+                        spacing = f:control_spacing(),
+                        fill_horizontal = 1,
+                        f:row({
+                            f:static_text({ title = "Guest feedback:", alignment = "right", width = lw }),
+                            f:checkbox({
+                                title = "Enable ratings, likes, comments & favorites",
+                                value = bind("feedbackEnabled"),
+                            }),
+                        }),
+                        f:row({
+                            f:static_text({ title = "Color theme:", alignment = "right", width = lw }),
+                            f:edit_field({ value = bind("colorTheme"), width_in_chars = 20, immediate = true }),
+                            f:static_text({ title = "PicPeak preset name, optional", font = "<system/small>" }),
+                        }),
+                    }),
+                }),
+            }),
         }),
     })
 end
 
 function PublishTask.endDialogForCollectionSettings(publishSettings, info)
     log:trace("endDialogForCollectionSettings")
-    local props = info.pluginContext
-    if info.why == "ok" then
-        local strategy = props.albumCreationStrategy or "collection"
-        info.collectionSettings.albumCreationStrategy = strategy
-        info.collectionSettings.eventType = props.eventType or "other"
+    if info.why ~= "ok" then return end
 
-        if strategy == "existing" then
-            local sel = props.selectedEventId
-            if util.nilOrEmpty(sel) or sel == "0" then
-                ErrorHandler.handleError("No event selected.", "endDialogForCollectionSettings: no event selected")
-                return
-            end
-            info.collectionSettings.remoteId = sel
+    local ctx = info.pluginContext
+    local cs = info.collectionSettings
+
+    cs.albumCreationStrategy = ctx.albumCreationStrategy or "collection"
+
+    if cs.albumCreationStrategy == "existing" then
+        local sel = ctx.selectedEventId
+        if util.nilOrEmpty(sel) or sel == "0" then
+            ErrorHandler.handleError("No event selected.", "endDialogForCollectionSettings: no event selected")
+            return
         end
+        cs.remoteId = sel
+    else
+        -- Persist all "new event" creation params into collection settings
+        cs.eventType        = ctx.eventType
+        cs.eventDate        = ctx.eventDate
+        cs.customerName     = ctx.customerName
+        cs.customerEmail    = ctx.customerEmail
+        cs.customerPhone    = ctx.customerPhone
+        cs.adminEmail       = ctx.adminEmail
+        cs.requirePassword  = ctx.requirePassword
+        cs.password         = ctx.password
+        cs.expiresAt        = ctx.expiresAt
+        cs.feedbackEnabled  = ctx.feedbackEnabled
+        cs.colorTheme       = ctx.colorTheme
     end
 end
 
 function PublishTask.updateCollectionSettings(publishSettings, info)
     log:trace("updateCollectionSettings")
-    if not info or not info.collectionSettings then
-        return
-    end
-    local props = info.collectionSettings
-    if props.albumCreationStrategy == "existing" and props.remoteId then
+    if not info or not info.collectionSettings then return end
+    local cs = info.collectionSettings
+    if cs.albumCreationStrategy == "existing" and cs.remoteId then
         local picpeak = PicPeakAPI:new(publishSettings.url, publishSettings.apiToken)
         if not picpeak:checkConnectivity() then
             log:warn("updateCollectionSettings: PicPeak not reachable")
             return
         end
-        local eventId = tostring(props.remoteId)
-        local name = picpeak:getEventName(eventId)
+        local eventId = tostring(cs.remoteId)
+        local name = picpeak:getEventName(eventId) or ("Event " .. eventId)
         local shareUrl = picpeak:getEventShareUrl(eventId)
-        if not name then
-            name = "Event " .. eventId
-        end
-        log:trace("updateCollectionSettings: binding to event id=" .. eventId .. " name=" .. name)
+        log:trace("updateCollectionSettings: binding event id=" .. eventId .. " name=" .. name)
         local catalog = LrApplication.activeCatalog()
         if catalog and info.publishedCollection then
             catalog:withWriteAccessDo("Bind PicPeak event", function()
                 info.publishedCollection:setRemoteId(eventId)
-                if shareUrl then
-                    info.publishedCollection:setRemoteUrl(shareUrl)
-                end
+                if shareUrl then info.publishedCollection:setRemoteUrl(shareUrl) end
                 info.publishedCollection:setName(name)
             end)
         end
