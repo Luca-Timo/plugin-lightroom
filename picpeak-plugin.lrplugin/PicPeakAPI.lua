@@ -458,6 +458,9 @@ local ADMIN_BASE_PATH = "/api/admin"
 -- POST to an absolute path with an explicit header set. The regular
 -- doPostRequest() is hard-wired to API_BASE_PATH and to the stored API token,
 -- neither of which applies while signing in.
+--
+-- Returns the decoded body, the status, a transport error, and the RAW headers
+-- — the headers matter because the admin JWT never appears in the body.
 local function postToPath(url, fullPath, body, headers)
     local response, respHeaders = LrHttp.post(
         url .. fullPath,
@@ -474,7 +477,35 @@ local function postToPath(url, fullPath, body, headers)
         local ok, decoded = LrTasks.pcall(function() return JSON:decode(response) end)
         if ok then parsed = decoded end
     end
-    return parsed, respHeaders.status or 0, nil
+    return parsed, respHeaders.status or 0, nil, respHeaders
+end
+
+--[[
+    Pull the admin JWT out of the response headers.
+
+    /api/auth/admin/login answers `{ user: {...} }` and puts the token in an
+    httpOnly `admin_token` cookie — it is NOT in the JSON body. Verified
+    against a live server; reading a body field here silently never works.
+
+    adminAuth accepts `Authorization: Bearer <jwt>` as well as the cookie
+    (utils/tokenUtils.getAdminTokenFromRequest), so lifting the value out of
+    the cookie and sending it as a Bearer header is all that is needed — no
+    cookie jar.
+]]
+local function jwtFromHeaders(respHeaders)
+    if type(respHeaders) ~= "table" then
+        return nil
+    end
+    for _, header in ipairs(respHeaders) do
+        if header.field and header.value
+            and string.lower(tostring(header.field)) == "set-cookie" then
+            local token = tostring(header.value):match("admin_token=([^;]+)")
+            if token and token ~= "" then
+                return token
+            end
+        end
+    end
+    return nil
 end
 
 local function jsonHeaders()
@@ -502,7 +533,7 @@ function PicPeakAPI.login(url, username, password)
         return { ok = false, message = "Enter your PicPeak email and password." }
     end
 
-    local parsed, status, transportError = postToPath(
+    local parsed, status, transportError, respHeaders = postToPath(
         url, AUTH_BASE_PATH .. "/admin/login",
         { username = username, password = password },
         jsonHeaders()
@@ -511,14 +542,16 @@ function PicPeakAPI.login(url, username, password)
         return { ok = false, message = transportError }
     end
 
-    if status == 200 and parsed then
-        if parsed.mfaRequired and parsed.mfaToken then
+    if status == 200 then
+        -- The MFA hand-off IS in the body; only the final JWT is a cookie.
+        if parsed and parsed.mfaRequired and parsed.mfaToken then
             return { mfaRequired = true, mfaToken = parsed.mfaToken }
         end
-        if parsed.token then
-            return { ok = true, jwt = parsed.token }
+        local jwt = jwtFromHeaders(respHeaders)
+        if jwt then
+            return { ok = true, jwt = jwt }
         end
-        return { ok = false, message = "PicPeak accepted the login but returned no token." }
+        return { ok = false, message = "PicPeak accepted the login but sent no session cookie." }
     end
 
     if status == 403 and parsed and parsed.code == "LOCAL_LOGIN_DISABLED" then
@@ -563,7 +596,7 @@ function PicPeakAPI.submitMfa(url, mfaToken, code)
     if util.nilOrEmpty(code) then
         return { ok = false, message = "Enter the code from your authenticator app." }
     end
-    local parsed, status, transportError = postToPath(
+    local _, status, transportError, respHeaders = postToPath(
         url, AUTH_BASE_PATH .. "/admin/login/mfa",
         { mfaToken = mfaToken, code = code },
         jsonHeaders()
@@ -571,8 +604,11 @@ function PicPeakAPI.submitMfa(url, mfaToken, code)
     if transportError then
         return { ok = false, message = transportError }
     end
-    if status == 200 and parsed and parsed.token then
-        return { ok = true, jwt = parsed.token }
+    if status == 200 then
+        local jwt = jwtFromHeaders(respHeaders)
+        if jwt then
+            return { ok = true, jwt = jwt }
+        end
     end
     if status == 401 then
         return { ok = false, canRetry = true, message = "That code was not accepted." }
