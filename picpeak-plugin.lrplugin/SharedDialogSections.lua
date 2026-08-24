@@ -1,4 +1,5 @@
 require("PicPeakAPI")
+require("LoginDialog")
 
 SharedDialogSections = {}
 
@@ -12,9 +13,37 @@ SharedDialogSections.EVENT_TYPES = {
 }
 
 -- Generate the 'PicPeak Server connection' dialog section
+--
+-- Signing in with an email and password is the standard path (#745): the
+-- plugin exchanges the credentials for an API token once and stores only the
+-- token, so the user never handles one. Token entry still exists, behind
+-- Advanced, because password sign-in is impossible on servers that enforce
+-- SSO or enable reCAPTCHA — and because anyone already using a pasted token
+-- must keep working after upgrading.
 function SharedDialogSections.getServerConnectionSection(f, propertyTable)
     local bind = LrView.bind
     local share = LrView.share
+
+    -- Seed the sign-in state from prefs so the section shows who is signed in
+    -- rather than an empty line on every reopen.
+    propertyTable.signedInAs = _G.prefs.signedInAs or ""
+    propertyTable.tokenExpiresAt = _G.prefs.tokenExpiresAt or ""
+    propertyTable.showAdvanced = _G.prefs.showAdvanced or false
+
+    local function statusTitle(signedInAs, apiToken)
+        if signedInAs ~= nil and signedInAs ~= "" then
+            local expiry = propertyTable.tokenExpiresAt
+            if expiry ~= nil and expiry ~= "" then
+                return "Signed in as " .. signedInAs .. " — token expires "
+                    .. string.sub(tostring(expiry), 1, 10)
+            end
+            return "Signed in as " .. signedInAs
+        end
+        if apiToken ~= nil and apiToken ~= "" then
+            return "Connected with a manually entered API token."
+        end
+        return "Not signed in."
+    end
 
     return {
         title = "PicPeak Server connection",
@@ -48,7 +77,120 @@ function SharedDialogSections.getServerConnectionSection(f, propertyTable)
                 end,
             }),
         }),
+
         f:row({
+            f:static_text({ title = "", alignment = "right", width = share("labelWidth") }),
+            f:static_text({
+                title = bind({
+                    keys = { "signedInAs", "apiToken" },
+                    operation = function(_, values)
+                        return statusTitle(values.signedInAs, values.apiToken)
+                    end,
+                }),
+                fill_horizontal = 1,
+                font = "<system/small>",
+            }),
+        }),
+
+        f:row({
+            f:static_text({ title = "", alignment = "right", width = share("labelWidth") }),
+            f:push_button({
+                title = "Sign in…",
+                action = function()
+                    LrTasks.startAsyncTask(function()
+                        local result = LoginDialog.signIn(propertyTable.url)
+                        if result.canceled then
+                            return
+                        end
+                        if result.ok then
+                            propertyTable.apiToken = result.token
+                            propertyTable.signedInAs = result.username
+                            propertyTable.tokenExpiresAt = result.expiresAt or ""
+                            _G.prefs.apiToken = result.token
+                            _G.prefs.apiTokenId = result.tokenId
+                            _G.prefs.signedInAs = result.username
+                            _G.prefs.tokenExpiresAt = result.expiresAt or ""
+                            LrDialogs.message(
+                                "Signed in to PicPeak",
+                                "The plugin created an API token for this machine. You can "
+                                    .. "revoke it any time in PicPeak → Settings → API Tokens.",
+                                "info"
+                            )
+                        else
+                            -- Password sign-in cannot work on this server at
+                            -- all. Open Advanced rather than leaving the user
+                            -- staring at a failure with no visible way on.
+                            if result.needsToken then
+                                propertyTable.showAdvanced = true
+                                _G.prefs.showAdvanced = true
+                            end
+                            LrDialogs.message("Could not sign in", result.message or "Sign-in failed.", "warning")
+                        end
+                    end)
+                end,
+            }),
+            f:push_button({
+                title = "Sign out",
+                enabled = bind({
+                    key = "apiToken",
+                    transform = function(value) return value ~= nil and value ~= "" end,
+                }),
+                action = function()
+                    LrTasks.startAsyncTask(function()
+                        -- The admin routes are JWT-only, so an API token
+                        -- cannot delete itself. Be honest about that rather
+                        -- than implying the token is gone from the server.
+                        local choice = LrDialogs.confirm(
+                            "Sign out of PicPeak",
+                            "Forgetting the token here does not remove it from the server. "
+                                .. "Revoke it too? That needs your password once more.",
+                            "Revoke on server",
+                            "Cancel",
+                            "Just forget it here"
+                        )
+                        if choice == "cancel" then
+                            return
+                        end
+                        if choice == "ok" then
+                            local revoked = LoginDialog.signOutAndRevoke(
+                                propertyTable.url, _G.prefs.apiTokenId
+                            )
+                            if revoked.canceled then
+                                return
+                            end
+                            if not revoked.ok then
+                                LrDialogs.message(
+                                    "Could not revoke the token",
+                                    (revoked.message or "Revoking failed.")
+                                        .. "\n\nThe token has NOT been forgotten locally, so "
+                                        .. "you can try again or remove it in PicPeak → "
+                                        .. "Settings → API Tokens.",
+                                    "warning"
+                                )
+                                return
+                            end
+                        end
+                        propertyTable.apiToken = ""
+                        propertyTable.signedInAs = ""
+                        propertyTable.tokenExpiresAt = ""
+                        _G.prefs.apiToken = ""
+                        _G.prefs.apiTokenId = nil
+                        _G.prefs.signedInAs = ""
+                        _G.prefs.tokenExpiresAt = ""
+                    end)
+                end,
+            }),
+            f:push_button({
+                title = "Advanced",
+                action = function()
+                    propertyTable.showAdvanced = not propertyTable.showAdvanced
+                    _G.prefs.showAdvanced = propertyTable.showAdvanced
+                end,
+            }),
+        }),
+
+        f:row({
+            visible = bind("showAdvanced"),
             f:static_text({
                 title = "API Token:",
                 alignment = "right",
@@ -62,10 +204,13 @@ function SharedDialogSections.getServerConnectionSection(f, propertyTable)
             }),
         }),
         f:row({
+            visible = bind("showAdvanced"),
             margin_top = 2,
             f:static_text({ title = "", alignment = "right", width = share("labelWidth") }),
             f:static_text({
-                title = "Token must have 'write' and 'admin' scopes. Create one in PicPeak → Settings → API Tokens.",
+                title = "Only needed if sign-in is unavailable — some servers enforce SSO "
+                    .. "or reCAPTCHA. Create one in PicPeak → Settings → API Tokens with "
+                    .. "the 'admin' scope.",
                 alignment = "left",
                 fill_horizontal = 1,
                 font = "<system/small>",

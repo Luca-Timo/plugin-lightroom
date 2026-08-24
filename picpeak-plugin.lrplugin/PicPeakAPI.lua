@@ -321,7 +321,13 @@ end
 
 -- Upload a single photo file to an event.
 -- Returns: photo id (integer) on success, nil + errReason on failure.
-function PicPeakAPI:uploadPhoto(eventId, filePath, fileName)
+--[[
+    @param replacesPhotoId optional picpeak photo id this render replaces
+           (PicPeak/picpeak#745). The id is read from the catalog photo's
+           plugin metadata, so it survives the editor renaming the file —
+           which is what makes it the reliable key rather than the filename.
+]]
+function PicPeakAPI:uploadPhoto(eventId, filePath, fileName, replacesPhotoId)
     if util.nilOrEmpty(eventId) then
         ErrorHandler.handleError("No event ID given.", "uploadPhoto: eventId empty")
         return nil, "No event ID"
@@ -342,13 +348,298 @@ function PicPeakAPI:uploadPhoto(eventId, filePath, fileName)
             contentType = mimeTypeForFile(filePath),
         },
     }
+    if replacesPhotoId ~= nil and replacesPhotoId ~= "" then
+        table.insert(mimeChunks, {
+            name = "replaces_photo_id",
+            value = tostring(replacesPhotoId),
+        })
+    end
 
     local parsedResponse, errReason = self:doMultiPartPostRequest(apiPath, mimeChunks)
-    if parsedResponse and parsedResponse.id then
-        log:info("uploadPhoto: " .. name .. " -> id=" .. tostring(parsedResponse.id))
-        return parsedResponse.id
+    if parsedResponse then
+        -- A replace answers with { replaced = true, photo = {...} }; a fresh
+        -- upload answers with the photo fields at the top level.
+        if parsedResponse.replaced and parsedResponse.photo and parsedResponse.photo.id then
+            log:info("uploadPhoto: " .. name .. " replaced id=" .. tostring(parsedResponse.photo.id))
+            return parsedResponse.photo.id, nil, true
+        end
+        if parsedResponse.id then
+            log:info("uploadPhoto: " .. name .. " -> id=" .. tostring(parsedResponse.id))
+            return parsedResponse.id
+        end
     end
     return nil, errReason
+end
+
+--[[
+    Fetch an event's photos with their proofing marks (PicPeak/picpeak#745).
+
+    Pages through GET /events/:id/photos until the server stops handing back
+    rows. Paging is not optional politeness here — a wedding gallery is
+    routinely well past the server's 100-per-page cap, and stopping at the
+    first page would silently import a fraction of the picks.
+
+    @param eventId
+    @param filters table: markedOnly, markSource, colorLabels (csv string),
+                          myColorLabels (csv), minRating, myMinRating
+    @return array of photo tables, or nil + reason
+]]
+function PicPeakAPI:getEventPhotos(eventId, filters)
+    if util.nilOrEmpty(eventId) then
+        return nil, "No event ID"
+    end
+    filters = filters or {}
+
+    local query = { "limit=100" }
+    local function addParam(key, value)
+        if value ~= nil and value ~= "" then
+            table.insert(query, key .. "=" .. tostring(value))
+        end
+    end
+    if filters.markedOnly then
+        addParam("marked_only", "true")
+    end
+    addParam("mark_source", filters.markSource)
+    addParam("color_labels", filters.colorLabels)
+    addParam("my_color_labels", filters.myColorLabels)
+    addParam("min_rating", filters.minRating)
+    addParam("my_min_rating", filters.myMinRating)
+
+    local photos = {}
+    local page = 1
+    -- Hard stop as a runaway guard: a server that always reports another page
+    -- would otherwise loop forever inside an async task the user cannot
+    -- cancel. 200 pages x 100 = 20000 photos, well past any real gallery.
+    local MAX_PAGES = 200
+
+    while page <= MAX_PAGES do
+        local path = "/events/" .. tostring(eventId) .. "/photos?"
+            .. table.concat(query, "&") .. "&page=" .. page
+        local parsed, errReason = self:doGetRequest(path)
+        if not parsed then
+            -- Partial results are worse than none: the caller would apply
+            -- labels to some photos and report success for all of them.
+            return nil, errReason or "Failed to fetch photos"
+        end
+        if type(parsed.photos) ~= "table" or #parsed.photos == 0 then
+            break
+        end
+        for _, row in ipairs(parsed.photos) do
+            table.insert(photos, row)
+        end
+        local pagination = parsed.pagination
+        if type(pagination) ~= "table" or pagination.pages == nil
+            or page >= tonumber(pagination.pages) then
+            break
+        end
+        page = page + 1
+    end
+
+    log:info("getEventPhotos: " .. #photos .. " photo(s) for event " .. tostring(eventId))
+    return photos
+end
+
+-- ---------------------------------------------------------------------------
+-- Sign-in: credentials in, API token out
+-- ---------------------------------------------------------------------------
+--[[
+    The admin JWT expires in 24h, so the plugin cannot simply keep it — and
+    keeping the PASSWORD instead would be strictly worse than a token:
+    unscoped, unrevocable without a global password change, and it unlocks the
+    web UI too. So credentials are used exactly once, exchanged for a
+    revocable API token, and then discarded.
+
+    These three endpoints live OUTSIDE /api/v1, so they bypass API_BASE_PATH.
+]]
+
+local AUTH_BASE_PATH = "/api/auth"
+local ADMIN_BASE_PATH = "/api/admin"
+
+-- POST to an absolute path with an explicit header set. The regular
+-- doPostRequest() is hard-wired to API_BASE_PATH and to the stored API token,
+-- neither of which applies while signing in.
+local function postToPath(url, fullPath, body, headers)
+    local response, respHeaders = LrHttp.post(
+        url .. fullPath,
+        JSON:encode(body),
+        headers,
+        "POST",
+        HTTP_TIMEOUT_DEFAULT
+    )
+    if not respHeaders then
+        return nil, 0, "No response from PicPeak server. Check the URL and your network."
+    end
+    local parsed = nil
+    if response and response ~= "" then
+        local ok, decoded = LrTasks.pcall(function() return JSON:decode(response) end)
+        if ok then parsed = decoded end
+    end
+    return parsed, respHeaders.status or 0, nil
+end
+
+local function jsonHeaders()
+    return {
+        { field = "Accept", value = "application/json" },
+        { field = "Content-Type", value = "application/json" },
+    }
+end
+
+--[[
+    Step 1. Returns one of:
+      { ok = true, jwt = "..." }
+      { mfaRequired = true, mfaToken = "..." }
+      { ok = false, message = "...", canRetry = bool, needsToken = bool }
+
+    `needsToken` means password sign-in cannot work on this server at all —
+    SSO enforced or reCAPTCHA enabled — and the caller should send the user to
+    the Advanced token field rather than letting them retype their password.
+]]
+function PicPeakAPI.login(url, username, password)
+    if util.nilOrEmpty(url) then
+        return { ok = false, message = "Enter the PicPeak server URL first." }
+    end
+    if util.nilOrEmpty(username) or util.nilOrEmpty(password) then
+        return { ok = false, message = "Enter your PicPeak email and password." }
+    end
+
+    local parsed, status, transportError = postToPath(
+        url, AUTH_BASE_PATH .. "/admin/login",
+        { username = username, password = password },
+        jsonHeaders()
+    )
+    if transportError then
+        return { ok = false, message = transportError }
+    end
+
+    if status == 200 and parsed then
+        if parsed.mfaRequired and parsed.mfaToken then
+            return { mfaRequired = true, mfaToken = parsed.mfaToken }
+        end
+        if parsed.token then
+            return { ok = true, jwt = parsed.token }
+        end
+        return { ok = false, message = "PicPeak accepted the login but returned no token." }
+    end
+
+    if status == 403 and parsed and parsed.code == "LOCAL_LOGIN_DISABLED" then
+        return {
+            ok = false,
+            needsToken = true,
+            message = "This server signs in through SSO, so the plugin cannot use "
+                .. "a password. Open Advanced and paste an API token created in "
+                .. "PicPeak -> Settings -> API Tokens.",
+        }
+    end
+    if status == 400 then
+        -- The login route verifies reCAPTCHA before anything else when the
+        -- admin has enabled it. There is no way to solve one from Lua.
+        return {
+            ok = false,
+            needsToken = true,
+            message = "This server requires reCAPTCHA on login, which the plugin "
+                .. "cannot complete. Open Advanced and paste an API token created "
+                .. "in PicPeak -> Settings -> API Tokens.",
+        }
+    end
+    if status == 423 then
+        local retryAfter = parsed and parsed.retryAfter
+        return {
+            ok = false,
+            message = "That account is temporarily locked after too many failed "
+                .. "attempts." .. (retryAfter and (" Try again in about "
+                .. tostring(math.ceil(tonumber(retryAfter) or 0)) .. "s.") or ""),
+        }
+    end
+    if status == 401 then
+        return { ok = false, canRetry = true, message = "Wrong email or password." }
+    end
+
+    return { ok = false, message = "Sign-in failed (HTTP " .. tostring(status) .. ")." }
+end
+
+-- Step 1b: exchange the short-lived mfa_pending token plus a TOTP or recovery
+-- code for a full admin JWT.
+function PicPeakAPI.submitMfa(url, mfaToken, code)
+    if util.nilOrEmpty(code) then
+        return { ok = false, message = "Enter the code from your authenticator app." }
+    end
+    local parsed, status, transportError = postToPath(
+        url, AUTH_BASE_PATH .. "/admin/login/mfa",
+        { mfaToken = mfaToken, code = code },
+        jsonHeaders()
+    )
+    if transportError then
+        return { ok = false, message = transportError }
+    end
+    if status == 200 and parsed and parsed.token then
+        return { ok = true, jwt = parsed.token }
+    end
+    if status == 401 then
+        return { ok = false, canRetry = true, message = "That code was not accepted." }
+    end
+    return { ok = false, message = "Two-factor verification failed (HTTP " .. tostring(status) .. ")." }
+end
+
+--[[
+    Step 2: mint the long-lived API token the plugin actually stores.
+
+    Named per machine so it is identifiable and individually revocable in
+    Settings -> API Tokens, and given an expiry rather than living forever:
+    LrPrefs is not the OS keychain, and an admin-scoped token in a plaintext
+    prefs file is effectively full account access.
+]]
+function PicPeakAPI.createApiToken(url, jwt, tokenName, expiresAt)
+    local parsed, status, transportError = postToPath(
+        url, ADMIN_BASE_PATH .. "/api-tokens",
+        { name = tokenName, scopes = { "admin" }, expires_at = expiresAt },
+        {
+            { field = "Authorization", value = "Bearer " .. tostring(jwt) },
+            { field = "Accept", value = "application/json" },
+            { field = "Content-Type", value = "application/json" },
+        }
+    )
+    if transportError then
+        return { ok = false, message = transportError }
+    end
+    if (status == 200 or status == 201) and parsed and parsed.token then
+        return { ok = true, token = parsed.token, id = parsed.id, expiresAt = parsed.expires_at }
+    end
+    if status == 403 then
+        return {
+            ok = false,
+            needsToken = true,
+            message = "Your PicPeak account cannot create API tokens (it lacks the "
+                .. "'settings.integrations' permission). Ask an administrator for a "
+                .. "token and paste it under Advanced.",
+        }
+    end
+    return { ok = false, message = "Could not create an API token (HTTP " .. tostring(status) .. ")." }
+end
+
+-- Revoking needs a JWT: the admin routes are JWT-only, so an API token cannot
+-- delete itself. Sign-out therefore either forgets the token locally or asks
+-- for the password again to revoke it properly.
+function PicPeakAPI.revokeApiToken(url, jwt, tokenId)
+    if tokenId == nil then
+        return { ok = false, message = "No stored token id to revoke." }
+    end
+    local response, headers = LrHttp.post(
+        url .. ADMIN_BASE_PATH .. "/api-tokens/" .. tostring(tokenId),
+        "",
+        {
+            { field = "Authorization", value = "Bearer " .. tostring(jwt) },
+            { field = "Accept", value = "application/json" },
+        },
+        "DELETE",
+        HTTP_TIMEOUT_DEFAULT
+    )
+    if not headers then
+        return { ok = false, message = "No response from PicPeak server." }
+    end
+    if SUCCESS_STATUS_CUSTOM[headers.status] then
+        return { ok = true }
+    end
+    return { ok = false, message = "Could not revoke the token (HTTP " .. tostring(headers.status) .. ")." }
 end
 
 -- ---------------------------------------------------------------------------

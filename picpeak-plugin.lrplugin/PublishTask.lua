@@ -83,7 +83,7 @@ function PublishTask.processRenderedPhotos(functionContext, exportContext)
     })
 
     local failures = {}
-    local skipped = 0
+    local replaced = 0
     local done = 0
     local shareUrl = picpeak:getEventShareUrl(eventId)
 
@@ -97,31 +97,36 @@ function PublishTask.processRenderedPhotos(functionContext, exportContext)
 
             -- Detect re-publish: Lightroom passes an existing remote ID for photos
             -- that were previously published and have since been modified.
-            -- PicPeak v1 API has no replace/delete photo endpoint, so we cannot
-            -- push the updated version without creating a duplicate. Skip the upload
-            -- and re-record the existing ID so Lightroom marks the photo as up-to-date.
+            --
+            -- This used to SKIP the upload, because v1 had no way to replace a
+            -- photo and a plain upload would have created a duplicate. It now
+            -- has one (replaces_photo_id, PicPeak/picpeak#745), so a
+            -- re-publish actually pushes the edited version — which is what
+            -- "republish" always looked like it did. The photo keeps its id,
+            -- its feedback and its position, so the client's proofing marks
+            -- survive the update.
             local existingId = rendition.publishedPhoto and rendition.publishedPhoto:getRemoteId()
-            if existingId and existingId ~= "" then
-                util.safeDeleteTempFile(pathOrMessage)
-                rendition:recordPublishedPhotoId(existingId)
-                if shareUrl then rendition:recordPublishedPhotoUrl(shareUrl) end
-                skipped = skipped + 1
-                log:info("PublishTask: skip re-upload for " .. fileName .. " (keeping id=" .. existingId .. ")")
-            else
-                local photoId, errReason = picpeak:uploadPhoto(eventId, pathOrMessage, fileName)
-                util.safeDeleteTempFile(pathOrMessage)
+            local replacesPhotoId = (existingId and existingId ~= "") and existingId or nil
 
-                if not photoId then
-                    log:error("PublishTask: upload failed for " .. fileName .. ": " .. tostring(errReason))
-                    table.insert(failures, fileName .. " (" .. (errReason or "Upload failed") .. ")")
-                else
-                    local photoIdStr = tostring(photoId)
-                    MetadataTask.setPhotoId(photo, photoIdStr)
-                    MetadataTask.setEventId(photo, eventId)
-                    rendition:recordPublishedPhotoId(photoIdStr)
-                    if shareUrl then rendition:recordPublishedPhotoUrl(shareUrl) end
-                    log:info("PublishTask: " .. fileName .. " -> photoId=" .. photoIdStr)
+            local photoId, errReason = picpeak:uploadPhoto(
+                eventId, pathOrMessage, fileName, replacesPhotoId
+            )
+            util.safeDeleteTempFile(pathOrMessage)
+
+            if not photoId then
+                log:error("PublishTask: upload failed for " .. fileName .. ": " .. tostring(errReason))
+                table.insert(failures, fileName .. " (" .. (errReason or "Upload failed") .. ")")
+            else
+                local photoIdStr = tostring(photoId)
+                MetadataTask.setPhotoId(photo, photoIdStr)
+                MetadataTask.setEventId(photo, eventId)
+                rendition:recordPublishedPhotoId(photoIdStr)
+                if shareUrl then rendition:recordPublishedPhotoUrl(shareUrl) end
+                if replacesPhotoId then
+                    replaced = replaced + 1
                 end
+                log:info("PublishTask: " .. fileName .. " -> photoId=" .. photoIdStr
+                    .. (replacesPhotoId and " (replaced)" or ""))
             end
         else
             util.safeDeleteTempFile(pathOrMessage)
@@ -135,18 +140,12 @@ function PublishTask.processRenderedPhotos(functionContext, exportContext)
     end
 
     progressScope:done()
-    log:info("=== PicPeak Publish DONE: " .. nPhotos .. " | failures=" .. #failures .. " | skipped=" .. skipped .. " ===")
-    if skipped > 0 then
-        LrDialogs.message(
-            "PicPeak: " .. skipped .. " photo(s) not re-uploaded",
-            "The PicPeak API does not support replacing photos remotely. "
-                .. tostring(skipped)
-                .. " already-published photo(s) were skipped — the originals remain in PicPeak unchanged.\n\n"
-                .. "To push an updated version: remove the photo from this collection, delete it in PicPeak, "
-                .. "then re-add and re-publish.",
-            "info"
-        )
-    end
+    log:info("=== PicPeak Publish DONE: " .. nPhotos .. " | failures=" .. #failures
+        .. " | replaced=" .. replaced .. " ===")
+    -- The old "N photos were not re-uploaded" notice is gone with the skip it
+    -- described: re-publishing now updates the photo in place. Replacements
+    -- are reported in the log rather than a dialog, because a successful
+    -- update is the expected outcome and does not need interrupting for.
     util.reportUploadFailures(failures)
 end
 
