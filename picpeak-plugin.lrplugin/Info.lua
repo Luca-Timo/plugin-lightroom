@@ -20,20 +20,23 @@ return {
         },
     },
 
-    -- Library > Plug-in Extras. The round-trip's import half (#745) is not an
-    -- export or a publish, so it needs its own entry point.
+    -- Library > Plug-in Extras. ONE entry, deliberately.
     --
-    -- No trailing ellipsis, deliberately. Convention says a title that opens a
-    -- dialog gets one, but macOS App Shortcuts matches the menu title
-    -- CHARACTER FOR CHARACTER — and "…" is a single U+2026, not three dots, so
-    -- a user assigning a keyboard shortcut has to paste it rather than type
-    -- it. Lightroom gives plugins no way to bind a shortcut themselves, so the
-    -- App Shortcut is the only route to one-keystroke access and it wins over
-    -- the punctuation convention.
+    -- Lightroom Classic has no API for a top-level menu and none for a panel;
+    -- File/Library > Plug-in Extras are the only entry points a plugin gets.
+    -- So rather than scattering "Import", "Connection", "Re-import" through
+    -- Plug-in Extras, a single "PicPeak" item opens a hub that dispatches to
+    -- all of them — which also means one OS-level App Shortcut on this title
+    -- reaches the entire plugin.
+    --
+    -- No trailing ellipsis: macOS App Shortcuts matches the menu title
+    -- CHARACTER FOR CHARACTER, and "…" is a single U+2026 the user would have
+    -- to paste rather than type. Lightroom gives plugins no way to bind a
+    -- shortcut themselves, so that route has to stay easy.
     LrLibraryMenuItems = {
         {
-            title = "Import selections from PicPeak",
-            file = "ImportSelectionsMenuItem.lua",
+            title = "PicPeak",
+            file = "PicPeakMenuItem.lua",
         },
     },
 
@@ -43,5 +46,5 @@ return {
 
     LrPluginInfoURL = "https://github.com/bmachek/lrc-picpeak",
 
-    VERSION = { major = 1, minor = 1, revision = 0, build = 0 },
+    VERSION = { major = 1, minor = 2, revision = 0, build = 0 },
 }

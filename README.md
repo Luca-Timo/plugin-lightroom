@@ -43,7 +43,12 @@ gallery.
 
 ### Import selections — the round-trip
 
-**Library → Plug-in Extras → Import selections from PicPeak**
+**Library → Plug-in Extras → PicPeak**
+
+Everything lives in that one window — importing selections, and the server
+connection. Lightroom Classic has no API for a top-level menu or a docked
+panel, so a single hub behind a single menu item is the closest thing
+available, and it means one keyboard shortcut reaches the whole plugin.
 
 ### Giving it a keyboard shortcut
 
@@ -52,7 +57,7 @@ Lightroom gives plugins no way to bind a shortcut, so use the OS. On macOS:
 Adobe Lightroom Classic, and enter the menu title exactly:
 
 ```
-Import selections from PicPeak
+PicPeak
 ```
 
 The title carries no trailing ellipsis on purpose — App Shortcuts matches it
@@ -64,7 +69,7 @@ The workflow this serves:
 1. Upload the unedited camera JPGs (`IMG_1234.JPG`) to a PicPeak event.
 2. The client marks colour labels and stars while proofing. You can add your own
    marks in the admin view.
-3. In Lightroom, run **Import selections from PicPeak**, choose the event and
+3. In Lightroom, open **PicPeak** and choose **Import selections**, pick the event and
    the folder holding your RAW files, and pick what to bring in — everything, or
    only what was marked.
 4. The plugin matches each picked photo to its RAW by filename, adds it to the

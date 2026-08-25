@@ -38,6 +38,24 @@ function SharedDialogSections.syncConnectionPrefs(propertyTable)
     end)
 end
 
+--[[
+    The connection controls as a plain list of rows.
+
+    Split out from the section wrapper below so the same controls can serve
+    three containers that differ: the Export dialog and the Plug-in Manager
+    want a *section* (a table carrying `title` and `bind_to_object`), while
+    the PicPeak hub needs them inside an ordinary column in a modal dialog.
+    Building them twice would guarantee the two drifted.
+]]
+function SharedDialogSections.getConnectionRows(f, propertyTable)
+    local section = SharedDialogSections.getServerConnectionSection(f, propertyTable)
+    local rows = {}
+    for _, row in ipairs(section) do
+        table.insert(rows, row)
+    end
+    return rows
+end
+
 -- Generate the 'PicPeak Server connection' dialog section
 --
 -- Signing in with an email and password is the standard path (#745): the
