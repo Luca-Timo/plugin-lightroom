@@ -24,16 +24,41 @@ ColorLabelMerge = {}
 
 ColorLabelMerge.COLOR_PRIORITY = { "green", "yellow", "red", "blue", "purple" }
 
--- Lightroom's own label names. setRawMetadata("colorNameForLabel", ...) only
--- lights up the swatch for these exact strings; anything else becomes a
--- custom label that shows as white.
+-- Lightroom's own label names for the `colorNameForLabel` raw metadata key.
+-- Lowercase, matching what getRawMetadata RETURNS — so a value read back and
+-- written again round-trips to the same swatch instead of turning into a
+-- custom label.
 ColorLabelMerge.LIGHTROOM_COLOR_NAMES = {
-    red = "Red",
-    yellow = "Yellow",
-    green = "Green",
-    blue = "Blue",
-    purple = "Purple",
+    red = "red",
+    yellow = "yellow",
+    green = "green",
+    blue = "blue",
+    purple = "purple",
 }
+
+--[[
+    Values `colorNameForLabel` uses to mean "this photo has no label".
+
+    An unlabelled photo does NOT read back as nil or "" — Lightroom answers
+    with "grey". Treating that as a real existing label made every freshly
+    imported photo look like a conflict, so `fill_empty` (the default) refused
+    to write a single colour: the first real run reported 7 conflicts and 0
+    colours written on 7 photos that had just been added to the catalog and
+    could not have carried a label at all.
+
+    Matched case-insensitively, with the American spelling and "none" accepted
+    too, because guessing wrong here fails silently in exactly that way.
+]]
+local UNSET_LABELS = {
+    [""] = true, grey = true, gray = true, none = true,
+}
+
+function ColorLabelMerge.isUnsetLabel(value)
+    if value == nil then
+        return true
+    end
+    return UNSET_LABELS[tostring(value):lower()] == true
+end
 
 -- How a conflict between PicPeak and Lightroom resolves. Values are stored in
 -- prefs, so keep the strings stable.
@@ -75,7 +100,7 @@ end
 ]]
 function ColorLabelMerge.resolveColor(incoming, existing, mode)
     local incomingName = ColorLabelMerge.lightroomColorName(incoming)
-    local hasExisting = existing ~= nil and existing ~= ""
+    local hasExisting = not ColorLabelMerge.isUnsetLabel(existing)
 
     if incomingName == nil then
         return nil, false
@@ -83,7 +108,7 @@ function ColorLabelMerge.resolveColor(incoming, existing, mode)
     if not hasExisting then
         return incomingName, false
     end
-    if incomingName == existing then
+    if incomingName == tostring(existing):lower() then
         return nil, false
     end
 

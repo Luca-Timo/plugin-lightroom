@@ -28,6 +28,48 @@ local MARK_SOURCES = {
     { title = "My own marks only", value = "mine" },
 }
 
+--[[
+    Remember the dialog's settings between runs.
+
+    Lightroom gives a plugin no persistent panel — this is a menu item, so the
+    dialog is rebuilt from scratch every time it is opened. Re-typing the RAW
+    folder and re-picking the scope on every import is the single most tedious
+    part of the workflow, so the answers are kept in prefs.
+
+    Stored as individual keys rather than one table: LrPrefs round-trips
+    scalars reliably, and a single malformed table would lose every setting at
+    once instead of one.
+]]
+local PERSISTED = {
+    "eventId", "folderPath", "recurse", "scope", "markSource", "minRating",
+    "applyColors", "applyRatings", "mergeMode", "addMissingToCatalog",
+    "allowNumberMatch", "collectionName",
+}
+
+local function restoreSettings(props)
+    for _, key in ipairs(PERSISTED) do
+        local stored = _G.prefs["import_" .. key]
+        if stored ~= nil then
+            props[key] = stored
+        end
+    end
+    for _, color in ipairs(COLORS) do
+        local stored = _G.prefs["import_color_" .. color]
+        if stored ~= nil then
+            props["color_" .. color] = stored
+        end
+    end
+end
+
+local function saveSettings(props)
+    for _, key in ipairs(PERSISTED) do
+        _G.prefs["import_" .. key] = props[key]
+    end
+    for _, color in ipairs(COLORS) do
+        _G.prefs["import_color_" .. color] = props["color_" .. color]
+    end
+end
+
 local function selectedColors(props)
     local picked = {}
     for _, color in ipairs(COLORS) do
@@ -158,6 +200,8 @@ function ImportSelectionsDialog.show()
         for _, color in ipairs(COLORS) do
             props["color_" .. color] = false
         end
+        -- Defaults first, then whatever the last run used.
+        restoreSettings(props)
 
         local lw = LrView.share("importLabel")
         local colorRow = { spacing = f:label_spacing() }
@@ -298,6 +342,7 @@ function ImportSelectionsDialog.show()
         if result ~= "ok" then
             return
         end
+        saveSettings(props)
 
         if util.nilOrEmpty(props.folderPath) then
             LrDialogs.message("Choose a RAW folder", "Pick the folder that holds the RAW files first.", "warning")
