@@ -12,6 +12,32 @@ SharedDialogSections.EVENT_TYPES = {
     { title = "Family", value = "family" },
 }
 
+--[[
+    Seed a dialog's connection fields from prefs, and write any change back.
+
+    The Export and Publish dialogs keep `url` / `apiToken` on their own
+    property tables, and `prefs.url` was never written by anything. So a user
+    who configured the connection in the Export dialog still had an empty
+    `prefs.url`, and the Import menu item — which has no export settings to
+    read — refused with "PicPeak is not connected yet".
+
+    Every surface now reads and writes the same two prefs.
+]]
+function SharedDialogSections.syncConnectionPrefs(propertyTable)
+    if util.nilOrEmpty(propertyTable.url) then
+        propertyTable.url = _G.prefs.url or ""
+    end
+    if util.nilOrEmpty(propertyTable.apiToken) then
+        propertyTable.apiToken = _G.prefs.apiToken or ""
+    end
+    propertyTable:addObserver("url", function(props)
+        _G.prefs.url = props.url or ""
+    end)
+    propertyTable:addObserver("apiToken", function(props)
+        _G.prefs.apiToken = props.apiToken or ""
+    end)
+end
+
 -- Generate the 'PicPeak Server connection' dialog section
 --
 -- Signing in with an email and password is the standard path (#745): the
@@ -106,6 +132,7 @@ function SharedDialogSections.getServerConnectionSection(f, propertyTable)
                             propertyTable.apiToken = result.token
                             propertyTable.signedInAs = result.username
                             propertyTable.tokenExpiresAt = result.expiresAt or ""
+                            _G.prefs.url = propertyTable.url or ""
                             _G.prefs.apiToken = result.token
                             _G.prefs.apiTokenId = result.tokenId
                             _G.prefs.signedInAs = result.username

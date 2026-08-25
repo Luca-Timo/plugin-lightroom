@@ -4,6 +4,9 @@ require("SharedDialogSections")
 ExportDialogSections = {}
 
 function ExportDialogSections.startDialog(propertyTable)
+    -- Keep prefs and the export settings in step, so configuring the
+    -- connection here also enables the Import menu item (#745).
+    SharedDialogSections.syncConnectionPrefs(propertyTable)
     LrTasks.startAsyncTask(function()
         propertyTable.picpeak = PicPeakAPI:new(propertyTable.url, propertyTable.apiToken)
         propertyTable.events = propertyTable.picpeak:getEvents()
