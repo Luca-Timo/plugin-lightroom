@@ -43,7 +43,21 @@ gallery.
 
 ### Import selections — the round-trip
 
-**Library → Plug-in Extras → Import selections from PicPeak…**
+**Library → Plug-in Extras → Import selections from PicPeak**
+
+### Giving it a keyboard shortcut
+
+Lightroom gives plugins no way to bind a shortcut, so use the OS. On macOS:
+**System Settings → Keyboard → Keyboard Shortcuts → App Shortcuts → +**, pick
+Adobe Lightroom Classic, and enter the menu title exactly:
+
+```
+Import selections from PicPeak
+```
+
+The title carries no trailing ellipsis on purpose — App Shortcuts matches it
+character for character, and `…` is a single character you would have to paste
+rather than type.
 
 The workflow this serves:
 
