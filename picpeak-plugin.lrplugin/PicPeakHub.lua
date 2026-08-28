@@ -61,7 +61,7 @@ function PicPeakHub.show()
                 spacing = f:control_spacing(),
                 bind_to_object = props,
                 f:static_text({
-                    title = "PicPeak",
+                    title = "PicPeak Importer",
                     font = "<system/bold>",
                 }),
                 f:static_text({
@@ -89,7 +89,7 @@ function PicPeakHub.show()
             }))
 
             choice = LrDialogs.presentModalDialog({
-                title = "PicPeak",
+                title = "PicPeak Importer",
                 contents = f:column(column),
                 actionVerb = "Import selections",
                 otherVerb = "Connection",

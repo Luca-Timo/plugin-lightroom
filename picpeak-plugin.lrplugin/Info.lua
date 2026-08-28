@@ -29,13 +29,25 @@ return {
     -- all of them — which also means one OS-level App Shortcut on this title
     -- reaches the entire plugin.
     --
-    -- No trailing ellipsis: macOS App Shortcuts matches the menu title
-    -- CHARACTER FOR CHARACTER, and "…" is a single U+2026 the user would have
-    -- to paste rather than type. Lightroom gives plugins no way to bind a
-    -- shortcut themselves, so that route has to stay easy.
+    -- The title must NOT equal LrPluginName, and must say what it DOES.
+    --
+    -- Lightroom draws the plugin name as a DISABLED section header above its
+    -- items in Plug-in Extras. With both called "PicPeak" the submenu held two
+    -- entries reading the same thing, and macOS App Shortcuts binds to the
+    -- first match — the header — so the shortcut appeared next to something
+    -- unclickable and did nothing.
+    --
+    -- "Open PicPeak" fixed the binding but read like it opens the website.
+    -- Under a header that already says "PicPeak", the item has to name the
+    -- action, not repeat the product.
+    --
+    -- No trailing ellipsis either: App Shortcuts matches the title CHARACTER
+    -- FOR CHARACTER, and "…" is a single U+2026 the user would have to paste
+    -- rather than type. Lightroom gives plugins no way to bind a shortcut
+    -- themselves, so that route has to stay easy.
     LrLibraryMenuItems = {
         {
-            title = "PicPeak",
+            title = "PicPeak Importer",
             file = "PicPeakMenuItem.lua",
         },
     },
