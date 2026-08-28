@@ -42,3 +42,22 @@ end
 if _G.prefs.url == nil then
     _G.prefs.url = ""
 end
+
+-- Sign-in state (#745). The token itself still lives in prefs.apiToken, so
+-- anyone who pasted one before this release keeps working untouched — these
+-- only describe HOW it got there.
+--
+-- apiTokenId is stored so "sign out and revoke" can delete the right token:
+-- the admin routes are JWT-only, so the token cannot identify itself.
+if _G.prefs.apiTokenId == nil then
+    _G.prefs.apiTokenId = nil
+end
+if _G.prefs.signedInAs == nil then
+    _G.prefs.signedInAs = ""
+end
+if _G.prefs.tokenExpiresAt == nil then
+    _G.prefs.tokenExpiresAt = ""
+end
+if _G.prefs.showAdvanced == nil then
+    _G.prefs.showAdvanced = false
+end

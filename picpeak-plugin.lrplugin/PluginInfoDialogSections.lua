@@ -1,4 +1,5 @@
 require("PicPeakAPI")
+require("SharedDialogSections")
 
 PluginInfoDialogSections = {}
 
@@ -7,12 +8,20 @@ function PluginInfoDialogSections.startDialog(propertyTable)
         prefs.logging = false
     end
     propertyTable.logging = prefs.logging
+    -- The connection lives here too (#745). Import selections is a Library
+    -- menu item with no export dialog behind it, so the Plug-in Manager is
+    -- the only place a user can sign in before using it.
+    SharedDialogSections.syncConnectionPrefs(propertyTable)
+    propertyTable:addObserver("logging", function(props)
+        prefs.logging = props.logging
+    end)
 end
 
 function PluginInfoDialogSections.sectionsForBottomOfDialog(f, propertyTable)
     local bind = LrView.bind
 
     return {
+        SharedDialogSections.getServerConnectionSection(f, propertyTable),
         {
             bind_to_object = propertyTable,
             title = "PicPeak Plugin Logging",

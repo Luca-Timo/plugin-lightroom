@@ -164,3 +164,67 @@ function util.safeDeleteTempFile(path)
         log:warn("safeDeleteTempFile: could not delete " .. tostring(path) .. ": " .. tostring(err))
     end
 end
+
+-- ---------------------------------------------------------------------------
+-- Filename matching for the round-trip (PicPeak/picpeak#745)
+-- ---------------------------------------------------------------------------
+
+-- Extensions worth indexing when scanning a RAW folder. JPEG/HEIC are in the
+-- list on purpose: plenty of photographers deliver from JPEG masters, and a
+-- folder with no RAW at all should still match rather than silently find zero.
+util.RAW_EXTENSIONS = {
+    "cr2", "cr3", "nef", "arw", "raf", "orf", "rw2", "dng", "pef", "srw",
+    "srf", "sr2", "3fr", "fff", "iiq", "erf", "mos", "mrw", "x3f", "gpr",
+    "jpg", "jpeg", "heic", "heif", "tif", "tiff", "png",
+}
+
+-- The filename without its extension: "IMG_1234.CR3" -> "IMG_1234"
+function util.stemOf(filename)
+    if util.nilOrEmpty(filename) then
+        return nil
+    end
+    local name = tostring(filename):gsub("^.*[/\\]", "")
+    return (name:gsub("%.[^.]+$", ""))
+end
+
+-- The lowercase extension without the dot, or nil.
+function util.extensionOf(filename)
+    if util.nilOrEmpty(filename) then
+        return nil
+    end
+    local ext = tostring(filename):match("%.([^.]+)$")
+    return ext and ext:lower() or nil
+end
+
+function util.isSupportedPhotoExtension(filename)
+    local ext = util.extensionOf(filename)
+    if not ext then
+        return false
+    end
+    return util.table_contains(util.RAW_EXTENSIONS, ext)
+end
+
+-- The LONGEST trailing digit run of a filename stem:
+--   "IMG_1234.JPG"            -> "1234"
+--   "Smith_Wedding_11234.jpg" -> "11234"
+--
+-- Deliberately the longest run and never a fixed last-N slice. Multi-camera
+-- shoots disambiguate by prefixing the camera index INTO the number
+-- ("cam11234.jpg" / "cam21234.jpg"); a last-4 slice reads "1234" from both
+-- bodies and reintroduces exactly the collision the prefix removes.
+--
+-- Must stay identical to trailingDigitRun() in the picpeak backend
+-- (services/photoReplacementService.js) — update both together.
+function util.trailingDigitRun(filename)
+    local stem = util.stemOf(filename)
+    if not stem then
+        return nil
+    end
+    return stem:match("(%d+)$")
+end
+
+-- Case-insensitive stem, for building the folder index.
+function util.normalizedStem(filename)
+    local stem = util.stemOf(filename)
+    return stem and stem:lower() or nil
+end

@@ -2,6 +2,7 @@ MetadataTask = {}
 
 local keyPhotoId = "picpeakPhotoId"
 local keyEventId = "picpeakEventId"
+local keySourceFilename = "picpeakSourceFilename"
 
 local function writeField(photo, key, value)
     if not photo then
@@ -45,5 +46,17 @@ end
 function MetadataTask.getEventId(photo)
     if not photo then return nil end
     local v = photo:getPropertyForPlugin(_PLUGIN, keyEventId)
+    return (v and v ~= "") and v or nil
+end
+
+function MetadataTask.setSourceFilename(photo, filename)
+    return writeField(photo, keySourceFilename, filename)
+end
+
+-- The camera-original name this photo was proofed under (#745). Used as the
+-- fallback key when a render is uploaded back under a different name.
+function MetadataTask.getSourceFilename(photo)
+    if not photo then return nil end
+    local v = photo:getPropertyForPlugin(_PLUGIN, keySourceFilename)
     return (v and v ~= "") and v or nil
 end

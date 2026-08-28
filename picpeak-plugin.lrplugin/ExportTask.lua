@@ -55,7 +55,11 @@ local function showEventOptionsDialog(picpeak, exportParams)
 
                     -- Existing picker
                     f:row({
-                        visible = LrBinding.keyEquals("eventMode", "existing"),
+                        visible = LrView.bind({
+                            key = "eventMode",
+                            object = exportParams,
+                            transform = function(value) return value == "existing" end,
+                        }),
                         f:static_text({
                             title = "Event:",
                             alignment = "right",
@@ -71,7 +75,11 @@ local function showEventOptionsDialog(picpeak, exportParams)
 
                     -- New event fields
                     f:column({
-                        visible = LrBinding.keyEquals("eventMode", "new"),
+                        visible = LrView.bind({
+                            key = "eventMode",
+                            object = exportParams,
+                            transform = function(value) return value == "new" end,
+                        }),
                         spacing = f:control_spacing(),
                         fill_horizontal = 1,
                         f:row({
@@ -223,7 +231,23 @@ function ExportTask.processRenderedPhotos(functionContext, exportContext)
             local photo = rendition.photo
             local fileName = photo:getFormattedMetadata("fileName")
 
-            local photoId, errReason = picpeak:uploadPhoto(eventId, pathOrMessage, fileName)
+            -- If this photo came FROM PicPeak (imported by the round-trip),
+            -- put the finished render back over its proof instead of adding a
+            -- second copy (#745). The id lives in plugin metadata, so it
+            -- survives the editor renaming the file — which is exactly the
+            -- case filename matching cannot handle.
+            --
+            -- Only when the stored event matches the export target: exporting
+            -- to a DIFFERENT gallery is a new photo there, not a replacement.
+            local replacesPhotoId = nil
+            local storedEventId = MetadataTask.getEventId(photo)
+            if storedEventId and tostring(storedEventId) == tostring(eventId) then
+                replacesPhotoId = MetadataTask.getPhotoId(photo)
+            end
+
+            local photoId, errReason = picpeak:uploadPhoto(
+                eventId, pathOrMessage, fileName, replacesPhotoId
+            )
             util.safeDeleteTempFile(pathOrMessage)
 
             if not photoId then

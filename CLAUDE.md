@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-A Lightroom Classic plugin (Lua) that uploads photos to a self-hosted PicPeak gallery server. It provides two workflows: **Export** (upload selected photos to a PicPeak event/gallery) and **Publish** (maintain synced collections mapped to PicPeak events).
+A Lightroom Classic plugin (Lua) that uploads photos to a self-hosted PicPeak gallery server. It provides three workflows: **Export** (upload selected photos to a PicPeak event/gallery), **Publish** (maintain synced collections mapped to PicPeak events), and **Import selections** (bring a client's proofing colour labels and star ratings back onto the matching RAW files — the round-trip, PicPeak/picpeak#745).
 
 ## What is PicPeak?
 
@@ -19,7 +19,7 @@ No build step — the plugin runs directly from `picpeak-plugin.lrplugin/` insid
 
 ### Core Modules
 
-- **`PicPeakAPI.lua`** — REST client for PicPeak v1 API (`/api/v1`). Auth: `Authorization: Bearer pp_live_xxx`. Key methods: `getEvents()`, `createEvent(params)`, `uploadPhoto(eventId, filePath, fileName)`, `checkConnectivity()`, `getEventShareUrl(eventId)`.
+- **`PicPeakAPI.lua`** — REST client for PicPeak v1 API (`/api/v1`). Auth: `Authorization: Bearer pp_live_xxx`. Key methods: `getEvents()`, `createEvent(params)`, `uploadPhoto(eventId, filePath, fileName, replacesPhotoId)`, `getEventPhotos(eventId, filters)`, `checkConnectivity()`, `getEventShareUrl(eventId)`. Sign-in helpers (`login`, `submitMfa`, `createApiToken`, `revokeApiToken`) target `/api/auth` and `/api/admin`, NOT `/api/v1` — they deliberately bypass `API_BASE_PATH`.
 - **`ExportTask.lua`** — Export workflow: resolve event → iterate renditions → upload each photo → write metadata → show share link.
 - **`PublishTask.lua`** — Publish workflow: map collection to event (create if needed) → incremental uploads → collection management callbacks.
 
@@ -32,10 +32,11 @@ Base path: `/api/v1`. Token must have `write` + `admin` scopes.
 | GET | `/events?limit=100` | List events (paginated, max 100) |
 | POST | `/events` | Create event (needs event_name, event_type) |
 | GET | `/events/:id` | Get event details |
-| POST | `/events/:id/photos` | Upload photo (multipart `photo` field) |
+| POST | `/events/:id/photos` | Upload photo (multipart `photo` field; optional `replaces_photo_id`) |
+| GET | `/events/:id/photos` | List photos with proofing marks (filters: `marked_only`, `mark_source`, `color_labels`, `my_color_labels`, `min_rating`, `my_min_rating`) |
 | GET | `/events/:id/share-link` | Get share URL |
 
-**Limitations of v1 API**: No delete photo, no delete event, no rename event endpoints. The publish plugin warns users when these operations are attempted.
+**Limitations of v1 API**: No delete photo, no delete event, no rename event endpoints. The publish plugin warns users when these operations are attempted. Replacing a photo IS supported (`replaces_photo_id`), which is why re-publish updates in place rather than skipping.
 
 ### Event types
 
@@ -48,10 +49,26 @@ Base path: `/api/v1`. Token must have `write` + `admin` scopes.
 
 ### Supporting Modules
 
-- **`MetadataTask.lua`** / **`MetadataProvider.lua`** — Store `picpeakPhotoId` and `picpeakEventId` on photos via plugin metadata.
+- **`MetadataTask.lua`** / **`MetadataProvider.lua`** — Store `picpeakPhotoId`, `picpeakEventId` and `picpeakSourceFilename` on photos via plugin metadata (schemaVersion 2). **`picpeakPhotoId` is load-bearing**: it is what lets a renamed render find its way back to the right PicPeak photo, so never clear it on export.
+- **`PicPeakMenuItem.lua`** / **`PicPeakHub.lua`** — the plugin's SINGLE entry point (Library > Plug-in Extras > PicPeak) and the hub that dispatches to everything else. Lightroom has no top-level-menu or panel API, so one item + one hub is the most reachable shape, and it lets one macOS App Shortcut cover the whole plugin. The hub dispatches on `presentModalDialog`'s return value and reopens afterwards — never nest modal dialogs.
+- **`ConnectionDialog.lua`** — the connection controls as a standalone modal, sharing `SharedDialogSections.getConnectionRows` with the Export dialog and Plug-in Manager sections.
+- **`ImportSelectionsDialog.lua`** / **`ImportSelectionsTask.lua`** — the round-trip import. The task resolves PicPeak photos to local files by `source_filename` stem, then optionally by trailing digit run.
+- **`ColorLabelMerge.lua`** — merge rules. `COLOR_PRIORITY` mirrors `COLOR_LABEL_PRIORITY` in the picpeak backend (`backend/src/constants/colorLabels.js`) — update both together.
+- **`LoginDialog.lua`** — credentials-to-token exchange, including the TOTP step.
 - **`util.lua`** — Shared helpers: `validateExportContextAndConnect`, `buildSimpleUploadProgressTitle`, `reportUploadFailures`, `safeDeleteTempFile`, `getPhotoDeviceId`, `getLogfilePath`, `cutToken`.
 - **`ErrorHandler.lua`** — Centralized error dialogs.
 - **`JSON.lua`** / **`inspect.lua`** — External libraries (copied from lrc-immich-plugin).
+
+### Filename matching invariants
+
+`util.trailingDigitRun` must stay identical to `trailingDigitRun()` in the
+picpeak backend (`backend/src/services/photoReplacementService.js`). It takes the
+**longest** trailing digit run, never a fixed last-N slice — multi-camera shoots
+disambiguate by prefixing the camera index into the number (`cam11234.jpg` /
+`cam21234.jpg`), and a last-4 slice reads `1234` from both bodies.
+
+Ambiguity is always refused, never resolved by guessing: a wrong colour label is
+worse than a missing one, because nothing about it looks wrong afterwards.
 
 ### Lightroom SDK Patterns
 
