@@ -50,7 +50,7 @@ Base path: `/api/v1`. Token must have `write` + `admin` scopes.
 ### Supporting Modules
 
 - **`MetadataTask.lua`** / **`MetadataProvider.lua`** — Store `picpeakPhotoId`, `picpeakEventId` and `picpeakSourceFilename` on photos via plugin metadata (schemaVersion 2). **`picpeakPhotoId` is load-bearing**: it is what lets a renamed render find its way back to the right PicPeak photo, so never clear it on export.
-- **`PicPeakMenuItem.lua`** / **`PicPeakOverview.lua`** — **PicPeak** in Library > Plug-in Extras, and the landing page it opens: connected server, account, last RAW folder, a server picker when more than one is known, and the actions.
+- **`PicPeakMenuItem.lua`** / **`PicPeakOverview.lua`** — **PicPeak Overview** in Library > Plug-in Extras, and the landing page it opens: connected server, account, last RAW folder, a server picker when more than one is known, and the actions.
 - **`PicPeakImportMenuItem.lua`** — **PicPeak Importer**, the second menu entry; opens the importer directly, skipping the overview.
 - **`ServerStore.lua`** — the known-server list, JSON-encoded in prefs. The ACTIVE server stays in the scalar `prefs.url` so a corrupt list can never disconnect an install. Tokens are not here — `TokenStore` keys the keychain by server URL, so switching server switches credential.
 

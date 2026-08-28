@@ -143,7 +143,7 @@ function PicPeakOverview.show()
         }))
 
         outcome = LrDialogs.presentModalDialog({
-            title = "PicPeak",
+            title = "PicPeak Overview",
             contents = f:column(rows),
             actionVerb = "Import selections",
             otherVerb = "Config",

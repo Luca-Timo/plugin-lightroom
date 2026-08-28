@@ -32,17 +32,17 @@ return {
     -- Two entries: the overview is the landing page, the importer is the
     -- shortcut past it for the repeat import — which is most of them.
     --
-    -- "PicPeak" deliberately repeats LrPluginName here. Lightroom draws the
-    -- plugin name as a DISABLED section header above these items, so the
-    -- submenu reads "PicPeak" twice. That is cosmetic and was only ever a real
-    -- problem for macOS App Shortcuts, which binds to the first title match
-    -- and would attach to the header — and no App Shortcut can reach these
-    -- items anyway, because Lightroom builds them lazily when the menu opens,
-    -- after key equivalents have already been applied at launch. Verified
-    -- against a real install; do not re-litigate without testing in the menu.
+    -- Neither title equals LrPluginName. Lightroom draws the plugin name as a
+    -- DISABLED section header above these items, so a matching title puts two
+    -- identical rows in the submenu — and macOS App Shortcuts, which binds to
+    -- the first title match, would attach to the header. That is moot in
+    -- practice (no App Shortcut can reach these items at all: Lightroom builds
+    -- them lazily when the menu opens, after key equivalents are applied at
+    -- launch, verified against a real install) but a submenu that reads
+    -- "PicPeak / PicPeak / PicPeak Importer" is worse for no gain.
     LrLibraryMenuItems = {
         {
-            title = "PicPeak",
+            title = "PicPeak Overview",
             file = "PicPeakMenuItem.lua",
         },
         {

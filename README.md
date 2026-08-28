@@ -43,7 +43,7 @@ gallery.
 
 ### Import selections — the round-trip
 
-**Library → Plug-in Extras → PicPeak**
+**Library → Plug-in Extras → PicPeak Overview**
 
 That opens the overview: which server you are connected to, which account,
 and the folder you last imported from. From there:
@@ -71,7 +71,7 @@ The workflow this serves:
 1. Upload the unedited camera JPGs (`IMG_1234.JPG`) to a PicPeak event.
 2. The client marks colour labels and stars while proofing. You can add your own
    marks in the admin view.
-3. In Lightroom, open **PicPeak Importer** (or **PicPeak** → *Import selections*), pick the event and
+3. In Lightroom, open **PicPeak Importer** (or **PicPeak Overview** → *Import selections*), pick the event and
    the folder holding your RAW files, and pick what to bring in — everything, or
    only what was marked.
 4. The plugin matches each picked photo to its RAW by filename, adds it to the
