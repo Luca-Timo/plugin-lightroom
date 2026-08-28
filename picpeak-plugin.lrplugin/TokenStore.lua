@@ -20,14 +20,19 @@ TokenStore = {}
 
 local LEGACY_PREF_KEY = "apiToken"
 
+-- Trailing slashes and surrounding space must not produce a second keychain
+-- entry for the same server. Deliberately a local copy rather than reaching
+-- into ServerStore: a keychain key is the wrong thing to make depend on
+-- another module's idea of tidy, and the two are three lines each.
+local function normalize(url)
+    if type(url) ~= "string" then return nil end
+    local trimmed = url:gsub("^%s+", ""):gsub("%s+$", ""):gsub("/+$", "")
+    if trimmed == "" then return nil end
+    return trimmed
+end
+
 local function keyFor(url)
-    local host = url
-    if type(url) == "string" then
-        -- Host only: the same server reached with a trailing slash must not
-        -- get a second keychain entry.
-        host = url:gsub("/+$", "")
-    end
-    return "picpeak:apiToken:" .. tostring(host or "")
+    return "picpeak:apiToken:" .. tostring(normalize(url) or "")
 end
 
 --[[
@@ -39,6 +44,16 @@ end
 function TokenStore.get(url)
     local legacy = _G.prefs[LEGACY_PREF_KEY]
     if legacy ~= nil and legacy ~= "" then
+        -- Without a URL there is no key to file it under. Migrating anyway
+        -- would store it as "picpeak:apiToken:" and clear the prefs copy, and
+        -- the moment a real server was entered the lookup would miss — leaving
+        -- the user signed out holding a token they can never see again,
+        -- because the plaintext one is gone and PicPeak shows a token once.
+        -- Wait for a URL instead; the token stays readable from prefs
+        -- meanwhile and migrates on the next read.
+        if normalize(url) == nil then
+            return legacy
+        end
         -- Move it, then clear it. Done before the keychain read so an
         -- interrupted previous migration cannot strand the token in neither
         -- place: the prefs copy is only cleared once the write returns.
