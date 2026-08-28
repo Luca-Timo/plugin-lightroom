@@ -45,24 +45,13 @@ gallery.
 
 **Library → Plug-in Extras → PicPeak Importer**
 
-Everything lives in that one window — importing selections, and the server
-connection. Lightroom Classic has no API for a top-level menu or a docked
-panel, so a single hub behind a single menu item is the closest thing
-available, and it means one keyboard shortcut reaches the whole plugin.
+That opens the importer. The server connection is a button on it, and also
+lives in the Plug-in Manager.
 
-### Giving it a keyboard shortcut
-
-Lightroom gives plugins no way to bind a shortcut, so use the OS. On macOS:
-**System Settings → Keyboard → Keyboard Shortcuts → App Shortcuts → +**, pick
-Adobe Lightroom Classic, and enter the menu title exactly:
-
-```
-PicPeak Importer
-```
-
-The title carries no trailing ellipsis on purpose — App Shortcuts matches it
-character for character, and `…` is a single character you would have to paste
-rather than type.
+Lightroom Classic has no API for a top-level menu, a docked panel, or a
+keyboard shortcut — and a macOS App Shortcut cannot reach these menu items
+either, because Lightroom builds them only when the menu is opened. The menu
+is the way in.
 
 The workflow this serves:
 
