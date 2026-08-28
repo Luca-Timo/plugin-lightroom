@@ -29,26 +29,25 @@ return {
     -- all of them — which also means one OS-level App Shortcut on this title
     -- reaches the entire plugin.
     --
-    -- The title must NOT equal LrPluginName, and must say what it DOES.
+    -- Two entries: the overview is the landing page, the importer is the
+    -- shortcut past it for the repeat import — which is most of them.
     --
-    -- Lightroom draws the plugin name as a DISABLED section header above its
-    -- items in Plug-in Extras. With both called "PicPeak" the submenu held two
-    -- entries reading the same thing, and macOS App Shortcuts binds to the
-    -- first match — the header — so the shortcut appeared next to something
-    -- unclickable and did nothing.
-    --
-    -- "Open PicPeak" fixed the binding but read like it opens the website.
-    -- Under a header that already says "PicPeak", the item has to name the
-    -- action, not repeat the product.
-    --
-    -- No trailing ellipsis either: App Shortcuts matches the title CHARACTER
-    -- FOR CHARACTER, and "…" is a single U+2026 the user would have to paste
-    -- rather than type. Lightroom gives plugins no way to bind a shortcut
-    -- themselves, so that route has to stay easy.
+    -- "PicPeak" deliberately repeats LrPluginName here. Lightroom draws the
+    -- plugin name as a DISABLED section header above these items, so the
+    -- submenu reads "PicPeak" twice. That is cosmetic and was only ever a real
+    -- problem for macOS App Shortcuts, which binds to the first title match
+    -- and would attach to the header — and no App Shortcut can reach these
+    -- items anyway, because Lightroom builds them lazily when the menu opens,
+    -- after key equivalents have already been applied at launch. Verified
+    -- against a real install; do not re-litigate without testing in the menu.
     LrLibraryMenuItems = {
         {
-            title = "PicPeak Overview",
+            title = "PicPeak",
             file = "PicPeakMenuItem.lua",
+        },
+        {
+            title = "PicPeak Importer",
+            file = "PicPeakImportMenuItem.lua",
         },
     },
 

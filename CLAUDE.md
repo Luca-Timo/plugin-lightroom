@@ -50,7 +50,8 @@ Base path: `/api/v1`. Token must have `write` + `admin` scopes.
 ### Supporting Modules
 
 - **`MetadataTask.lua`** / **`MetadataProvider.lua`** — Store `picpeakPhotoId`, `picpeakEventId` and `picpeakSourceFilename` on photos via plugin metadata (schemaVersion 2). **`picpeakPhotoId` is load-bearing**: it is what lets a renamed render find its way back to the right PicPeak photo, so never clear it on export.
-- **`PicPeakMenuItem.lua`** / **`PicPeakOverview.lua`** — the plugin's SINGLE entry point (Library > Plug-in Extras > PicPeak Overview) and the landing page it opens: connected server, account, last RAW folder, a server picker when more than one is known, and the actions.
+- **`PicPeakMenuItem.lua`** / **`PicPeakOverview.lua`** — **PicPeak** in Library > Plug-in Extras, and the landing page it opens: connected server, account, last RAW folder, a server picker when more than one is known, and the actions.
+- **`PicPeakImportMenuItem.lua`** — **PicPeak Importer**, the second menu entry; opens the importer directly, skipping the overview.
 - **`ServerStore.lua`** — the known-server list, JSON-encoded in prefs. The ACTIVE server stays in the scalar `prefs.url` so a corrupt list can never disconnect an install. Tokens are not here — `TokenStore` keys the keychain by server URL, so switching server switches credential.
 
   **No keyboard shortcut is possible.** Lightroom has no API to bind one, and a macOS App Shortcut cannot reach these items: Lightroom builds the Plug-in Extras entries lazily, after macOS has applied key equivalents at launch, so the binding lands on the plugin-name header (which is disabled) and never on the item. Verified against a real install — do not re-litigate this without testing it in the menu.
