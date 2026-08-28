@@ -1,6 +1,7 @@
 require("PicPeakAPI")
 require("LoginDialog")
 require("TokenStore")
+require("ServerStore")
 
 SharedDialogSections = {}
 
@@ -154,6 +155,8 @@ function SharedDialogSections.getServerConnectionSection(f, propertyTable)
                             propertyTable.tokenExpiresAt = result.expiresAt or ""
                             _G.prefs.url = propertyTable.url or ""
                             TokenStore.set(propertyTable.url, result.token)
+                            -- Remember it so the overview can offer it later.
+                            ServerStore.add(propertyTable.url)
                             _G.prefs.apiTokenId = result.tokenId
                             _G.prefs.signedInAs = result.username
                             _G.prefs.tokenExpiresAt = result.expiresAt or ""

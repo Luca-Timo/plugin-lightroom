@@ -1,36 +1,42 @@
 --[[
-    Library > Plug-in Extras > PicPeak Importer
+    Library > Plug-in Extras > PicPeak Overview
 
-    The plugin's single entry point, and it opens the importer directly.
+    The plugin's single entry point. Opens the overview, which dispatches to
+    the importer and the connection screen.
 
-    There was a hub here — a launcher window whose buttons opened the importer
-    or the connection screen. It existed so that ONE macOS App Shortcut could
-    reach every feature. That premise turned out to be false: Lightroom builds
-    the Plug-in Extras items lazily, after macOS has already applied key
-    equivalents at launch, so an App Shortcut binds to the plugin-name header
-    and never to the item. No shortcut is possible.
+    **There is no keyboard shortcut, and none is possible.** Lightroom's SDK
+    cannot bind one, and a macOS App Shortcut cannot reach these items either:
+    Lightroom builds the Plug-in Extras entries lazily when the menu is opened,
+    after macOS has already applied key equivalents at launch, so the binding
+    lands on the disabled plugin-name header and never on the item. Verified
+    against a real install — do not re-litigate without testing it in the menu.
 
-    Without a shortcut to justify it the hub was a click in front of the only
-    screen anyone wanted, so the importer IS the main window now. Connection
-    is a button on it.
-
-    Dispatch is still by return value rather than nested modals: the importer
-    closes, the connection screen opens, then the importer comes back.
+    Dispatch is by return value, never by nesting modal dialogs: the overview
+    closes, the chosen flow runs, the overview comes back.
 ]]
 
+require("PicPeakOverview")
 require("ImportSelectionsDialog")
 require("ConnectionDialog")
 
 LrTasks.startAsyncTask(function()
     local ok, err = LrTasks.pcall(function()
-        -- Bounded rather than `while true`: each pass is a real user decision,
-        -- but a bug that always returned "connection" would otherwise spin
-        -- dialogs forever with no way out.
-        for _ = 1, 20 do
-            if ImportSelectionsDialog.show() ~= "connection" then
+        -- Bounded rather than `while true`: every pass is a real user
+        -- decision, but a bug that always returned the same action would
+        -- otherwise spin dialogs with no way out.
+        for _ = 1, 50 do
+            local choice = PicPeakOverview.show()
+            if choice == nil then
                 return
+            elseif choice == "config" then
+                ConnectionDialog.show()
+            elseif choice == "import" then
+                -- The importer asks for the connection screen when the server
+                -- is unconfigured or its token has stopped working.
+                if ImportSelectionsDialog.show() == "connection" then
+                    ConnectionDialog.show()
+                end
             end
-            ConnectionDialog.show()
         end
     end)
     if not ok then

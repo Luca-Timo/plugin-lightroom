@@ -43,10 +43,20 @@ gallery.
 
 ### Import selections — the round-trip
 
-**Library → Plug-in Extras → PicPeak Importer**
+**Library → Plug-in Extras → PicPeak Overview**
 
-That opens the importer. The server connection is a button on it, and also
-lives in the Plug-in Manager.
+That opens the overview: which server you are connected to, which account,
+and the folder you last imported from. From there:
+
+- **Open web interface** — the gallery in your browser
+- **Config** — server, sign-in and API token
+- **Import selections** — pull the client's colours and stars onto your RAWs
+
+### More than one server
+
+Sign in to a second PicPeak and the overview grows a **Server** picker. Each
+server keeps its own token in the keychain, so switching is just choosing it —
+no re-authenticating.
 
 Lightroom Classic has no API for a top-level menu, a docked panel, or a
 keyboard shortcut — and a macOS App Shortcut cannot reach these menu items
@@ -58,7 +68,7 @@ The workflow this serves:
 1. Upload the unedited camera JPGs (`IMG_1234.JPG`) to a PicPeak event.
 2. The client marks colour labels and stars while proofing. You can add your own
    marks in the admin view.
-3. In Lightroom, open **PicPeak Importer** and choose **Import selections**, pick the event and
+3. In Lightroom, open **PicPeak Overview** and choose **Import selections**, pick the event and
    the folder holding your RAW files, and pick what to bring in — everything, or
    only what was marked.
 4. The plugin matches each picked photo to its RAW by filename, adds it to the

@@ -47,7 +47,7 @@ return {
     -- themselves, so that route has to stay easy.
     LrLibraryMenuItems = {
         {
-            title = "PicPeak Importer",
+            title = "PicPeak Overview",
             file = "PicPeakMenuItem.lua",
         },
     },
