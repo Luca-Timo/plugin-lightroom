@@ -55,7 +55,11 @@ local function showEventOptionsDialog(picpeak, exportParams)
 
                     -- Existing picker
                     f:row({
-                        visible = LrBinding.keyEquals("eventMode", "existing"),
+                        visible = LrView.bind({
+                            key = "eventMode",
+                            object = exportParams,
+                            transform = function(value) return value == "existing" end,
+                        }),
                         f:static_text({
                             title = "Event:",
                             alignment = "right",
@@ -71,7 +75,11 @@ local function showEventOptionsDialog(picpeak, exportParams)
 
                     -- New event fields
                     f:column({
-                        visible = LrBinding.keyEquals("eventMode", "new"),
+                        visible = LrView.bind({
+                            key = "eventMode",
+                            object = exportParams,
+                            transform = function(value) return value == "new" end,
+                        }),
                         spacing = f:control_spacing(),
                         fill_horizontal = 1,
                         f:row({

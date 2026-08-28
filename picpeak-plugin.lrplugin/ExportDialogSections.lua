@@ -53,7 +53,18 @@ function ExportDialogSections.sectionsForTopOfDialog(_, propertyTable)
 
                 -- Existing event picker
                 f:row({
-                    visible = LrBinding.keyEquals("eventMode", "existing"),
+                    -- Explicit object + transform rather than
+                    -- LrBinding.keyEquals: keyEquals was not resolving here,
+                    -- so BOTH the existing-event picker and the new-event
+                    -- fields rendered at once and the dialog read as though
+                    -- an event name were required to upload to an existing
+                    -- gallery. This form is bound to a named object, so it
+                    -- cannot depend on bind_to_object reaching this depth.
+                    visible = bind({
+                        key = "eventMode",
+                        object = propertyTable,
+                        transform = function(value) return value == "existing" end,
+                    }),
                     f:static_text({ title = "Event:", alignment = "right", width = lw }),
                     f:popup_menu({
                         truncation = "middle",
@@ -78,7 +89,11 @@ function ExportDialogSections.sectionsForTopOfDialog(_, propertyTable)
 
                 -- New event fields
                 f:column({
-                    visible = LrBinding.keyEquals("eventMode", "new"),
+                    visible = bind({
+                        key = "eventMode",
+                        object = propertyTable,
+                        transform = function(value) return value == "new" end,
+                    }),
                     spacing = f:control_spacing(),
 
                     -- Basic info

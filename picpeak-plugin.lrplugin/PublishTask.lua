@@ -288,7 +288,11 @@ function PublishTask.viewForCollectionSettings(f, publishSettings, info)
                     items = bind("picpeakEvents"),
                     value = bind("selectedEventId"),
                     width_in_chars = 28,
-                    enabled = LrBinding.keyEquals("albumCreationStrategy", "existing"),
+                    enabled = bind({
+                        key = "albumCreationStrategy",
+                        object = ctx,
+                        transform = function(value) return value == "existing" end,
+                    }),
                     immediate = true,
                 }),
             }),
@@ -297,7 +301,11 @@ function PublishTask.viewForCollectionSettings(f, publishSettings, info)
 
             -- New event details (shown when strategy == "collection")
             f:column({
-                visible = LrBinding.keyEquals("albumCreationStrategy", "collection"),
+                visible = bind({
+                    key = "albumCreationStrategy",
+                    object = ctx,
+                    transform = function(value) return value == "collection" end,
+                }),
                 spacing = f:control_spacing(),
                 fill_horizontal = 1,
 
