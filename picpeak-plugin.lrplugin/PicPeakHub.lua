@@ -16,6 +16,7 @@
 
 require("ImportSelectionsDialog")
 require("ConnectionDialog")
+require("TokenStore")
 
 PicPeakHub = {}
 
@@ -33,7 +34,7 @@ local function statusLines()
                 expiry = "  (token expires " .. string.sub(tostring(prefs.tokenExpiresAt), 1, 10) .. ")"
             end
             table.insert(lines, "Signed in as " .. tostring(prefs.signedInAs) .. expiry)
-        elseif not util.nilOrEmpty(prefs.apiToken) then
+        elseif not util.nilOrEmpty(TokenStore.get(prefs.url)) then
             table.insert(lines, "Connected with a manually entered API token.")
         else
             table.insert(lines, "Not signed in.")

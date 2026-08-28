@@ -11,6 +11,7 @@
 require("PicPeakAPI")
 require("ColorLabelMerge")
 require("ImportSelectionsTask")
+require("TokenStore")
 
 ImportSelectionsDialog = {}
 
@@ -160,7 +161,8 @@ end
 
 function ImportSelectionsDialog.show()
     local prefs = _G.prefs
-    if util.nilOrEmpty(prefs.url) or util.nilOrEmpty(prefs.apiToken) then
+    local apiToken = TokenStore.get(prefs.url)
+    if util.nilOrEmpty(prefs.url) or util.nilOrEmpty(apiToken) then
         LrDialogs.message(
             "PicPeak is not connected yet",
             "Open File > Plug-in Manager > PicPeak and sign in first.",
@@ -169,7 +171,7 @@ function ImportSelectionsDialog.show()
         return
     end
 
-    local api = PicPeakAPI:new(prefs.url, prefs.apiToken)
+    local api = PicPeakAPI:new(prefs.url, apiToken)
     local events = api:getEvents(100)
     if not events or #events == 0 then
         LrDialogs.message(
